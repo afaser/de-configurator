@@ -3,6 +3,7 @@ name: Build and Package
 on:
   push:
     branches: [ trunk, main, master ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ trunk, main, master ]
 
@@ -57,3 +58,38 @@ jobs:
         with:
           name: de-configurator-nix
           path: result/bin/de-configurator
+
+  release:
+    name: Create GitHub Release
+    needs: [build-linux, build-nix]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download Linux Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: de-configurator-linux
+          path: ./artifacts-linux
+
+      - name: Download Nix Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: de-configurator-nix
+          path: ./artifacts-nix
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          cp ./artifacts-linux/de-configurator ./release-assets/de-configurator-linux-x86_64
+          cp ./artifacts-nix/de-configurator ./release-assets/de-configurator-nix-x86_64
+
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/de-configurator-linux-x86_64
+            release-assets/de-configurator-nix-x86_64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
