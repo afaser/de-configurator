@@ -1,0 +1,53 @@
+name: Build and Package
+
+on:
+  push:
+    branches: [ trunk, main, master ]
+  pull_request:
+    branches: [ trunk, main, master ]
+
+jobs:
+  build-linux:
+    name: Build Standard Linux Binary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+
+      - name: Cargo Build Release
+        run: cargo build --release
+
+      - name: Upload Linux Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: de-configurator-linux
+          path: target/release/de-configurator
+
+  build-nix:
+    name: Build Nix Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Nix Build
+        run: nix-build default.nix
+
+      - name: Upload Nix Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: de-configurator-nix
+          path: result/bin/de-configurator
