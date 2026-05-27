@@ -1,27 +1,11 @@
-use std::fmt;
 use tokio::fs;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VpnState {
-    Off,
-    Warp,
-    Finland,
-}
-
-impl fmt::Display for VpnState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            VpnState::Off => write!(f, "VPN выключен"),
-            VpnState::Warp => write!(f, "Warp"),
-            VpnState::Finland => write!(f, "Финляндия"),
-        }
-    }
-}
+use crate::config::VpnStateConfig;
 
 #[derive(serde::Deserialize, Clone, Debug)]
 pub struct IpInfo {
     pub query: String, // IP-адрес
     pub country: String,
+    pub city: String,
 }
 
 pub struct VpnManager;
@@ -38,62 +22,74 @@ impl VpnManager {
     }
 
     /// Определяет текущее состояние VPN на основе активных сетевых интерфейсов
-    pub async fn detect_state(&self) -> VpnState {
-        if self.is_interface_up("fl").await {
-            VpnState::Finland
-        } else if self.is_interface_up("w").await {
-            VpnState::Warp
-        } else {
-            VpnState::Off
+    pub async fn detect_state(&self, states: &[VpnStateConfig]) -> VpnStateConfig {
+        for state in states {
+            if let Some(ref iface) = state.interface {
+                if self.is_interface_up(iface).await {
+                    return state.clone();
+                }
+            }
+        }
+        
+        // Если ни один интерфейс не поднят, возвращаем первое состояние без интерфейса (обычно "off")
+        for state in states {
+            if state.interface.is_none() {
+                return state.clone();
+            }
+        }
+
+        // Резервный вариант, если в конфиге вообще нет состояния без интерфейса
+        VpnStateConfig {
+            id: "off".to_string(),
+            hotkey_str: "".to_string(),
+            hotkey: global_hotkey::hotkey::HotKey::new(None, global_hotkey::hotkey::Code::F9),
+            display_name: "VPN выключен".to_string(),
+            interface: None,
+            up_cmd: vec![],
+            down_cmd: vec![],
         }
     }
 
     /// Переключает VPN в целевое состояние
-    pub async fn switch_to(&self, target: VpnState) -> Result<Option<IpInfo>, String> {
-        match target {
-            VpnState::Off => {
-                // Если Warp или Финляндия подняты, опускаем их
-                if self.is_interface_up("w").await {
-                    Self::run_cmd("doas", &["wg-quick", "down", "w"]).await?;
+    pub async fn switch_to(&self, target: &VpnStateConfig, all_states: &[VpnStateConfig]) -> Result<Option<IpInfo>, String> {
+        // 1. Опускаем все другие интерфейсы, которые сейчас подняты
+        for state in all_states {
+            if state.id != target.id {
+                if let Some(ref iface) = state.interface {
+                    if self.is_interface_up(iface).await {
+                        if !state.down_cmd.is_empty() {
+                            Self::run_cmd(&state.down_cmd).await?;
+                        }
+                    }
                 }
-                if self.is_interface_up("fl").await {
-                    Self::run_cmd("doas", &["wg-quick", "down", "fl"]).await?;
-                }
-                Ok(None)
             }
-            VpnState::Warp => {
-                // Отключаем Финляндию, если она была активна
-                if self.is_interface_up("fl").await {
-                    Self::run_cmd("doas", &["wg-quick", "down", "fl"]).await?;
+        }
+
+        // 2. Поднимаем целевой интерфейс, если он ещё не поднят
+        if let Some(ref iface) = target.interface {
+            if !self.is_interface_up(iface).await {
+                if !target.up_cmd.is_empty() {
+                    Self::run_cmd(&target.up_cmd).await?;
                 }
-                // Подключаем Warp, если он ещё не подключен
-                if !self.is_interface_up("w").await {
-                    Self::run_cmd("doas", &["wg-quick", "up", "w"]).await?;
-                }
-                
-                // Получаем новый IP
-                let ip_info = self.retry_fetch_ip_info().await?;
-                Ok(Some(ip_info))
             }
-            VpnState::Finland => {
-                // Отключаем Warp, если он был активен
-                if self.is_interface_up("w").await {
-                    Self::run_cmd("doas", &["wg-quick", "down", "w"]).await?;
-                }
-                // Подключаем Финляндию, если она ещё не подключена
-                if !self.is_interface_up("fl").await {
-                    Self::run_cmd("doas", &["wg-quick", "up", "fl"]).await?;
-                }
-                
-                // Получаем новый IP
-                let ip_info = self.retry_fetch_ip_info().await?;
-                Ok(Some(ip_info))
-            }
+            // Получаем новый IP
+            let ip_info = self.retry_fetch_ip_info().await?;
+            Ok(Some(ip_info))
+        } else {
+            // Если у целевого состояния нет интерфейса (например, "off"), 
+            // то все остальные интерфейсы уже потушены на первом шаге
+            Ok(None)
         }
     }
 
     /// Запуск внешней команды
-    async fn run_cmd(cmd: &str, args: &[&str]) -> Result<(), String> {
+    async fn run_cmd(cmd_parts: &[String]) -> Result<(), String> {
+        if cmd_parts.is_empty() {
+            return Ok(());
+        }
+        let cmd = &cmd_parts[0];
+        let args = &cmd_parts[1..];
+
         let output = tokio::process::Command::new(cmd)
             .args(args)
             .output()
@@ -116,7 +112,7 @@ impl VpnManager {
     /// Повторные попытки получить информацию об IP-адресе с таймаутом
     async fn retry_fetch_ip_info(&self) -> Result<IpInfo, String> {
         let mut last_err = String::new();
-        // Делаем до 4 попыток с увеличивающимся интервалом, чтобы дать маршрутизации WireGuard стабилизироваться
+        // Делаем до 4 попыток с увеличивающимся интервалом, чтобы дать маршрутизации стабилизироваться
         for i in 0..4 {
             let sleep_ms = 400 * (i + 1);
             tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
