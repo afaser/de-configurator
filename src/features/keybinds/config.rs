@@ -2,19 +2,13 @@ use kdl::KdlDocument;
 use std::str::FromStr;
 use global_hotkey::hotkey::HotKey;
 use crate::features::daemons::event::DaemonAction;
-
-#[derive(Debug, Clone)]
-pub enum KeybindAction {
-    Run(Vec<String>), // Запуск команды (путь к бинарнику + аргументы)
-    Vpn(String),      // Переключение VPN на стейт (state_id)
-    Daemon(String, DaemonAction), // Управление демоном (daemon_id, действие)
-}
+use crate::features::actions::event::CommandAction;
 
 #[derive(Debug, Clone)]
 pub struct KeybindConfig {
     pub hotkey_str: String,
     pub hotkey: HotKey,
-    pub action: KeybindAction,
+    pub action: CommandAction,
 }
 
 #[derive(Debug, Clone)]
@@ -44,7 +38,7 @@ impl KeybindsConfig {
                     // Ищем первый дочерний узел, который является действием
                     let child_node = node.children()
                         .and_then(|c| c.nodes().first())
-                        .ok_or_else(|| format!("У бинда '{}' должно быть указано действие (run, vpn или daemon)", hotkey_str))?;
+                        .ok_or_else(|| format!("У бинда '{}' должно быть указано действие (run, vpn, daemon или action)", hotkey_str))?;
 
                     let action = match child_node.name().value() {
                         "run" => {
@@ -54,14 +48,14 @@ impl KeybindsConfig {
                             if cmd_parts.is_empty() {
                                 return Err(format!("У действия run для бинда '{}' не указана команда", hotkey_str));
                             }
-                            KeybindAction::Run(cmd_parts)
+                            CommandAction::Run(cmd_parts)
                         }
                         "vpn" => {
                             let state_id = child_node.entries().get(0)
                                 .and_then(|e| e.value().as_string())
                                 .ok_or_else(|| format!("У действия vpn для бинда '{}' не указано целевое состояние", hotkey_str))?
                                 .to_string();
-                            KeybindAction::Vpn(state_id)
+                            CommandAction::Vpn(state_id)
                         }
                         "daemon" => {
                             let daemon_id = child_node.entries().get(0)
@@ -80,7 +74,14 @@ impl KeybindsConfig {
                                     return Err(format!("Неподдерживаемое действие демона '{}' для бинда '{}' (разрешены: on, off, toggle)", other, hotkey_str));
                                 }
                             };
-                            KeybindAction::Daemon(daemon_id, daemon_action)
+                            CommandAction::Daemon(daemon_id, daemon_action)
+                        }
+                        "action" => {
+                            let action_id = child_node.entries().get(0)
+                                .and_then(|e| e.value().as_string())
+                                .ok_or_else(|| format!("У действия action для бинда '{}' не указано целевое действие", hotkey_str))?
+                                .to_string();
+                            CommandAction::Action(action_id)
                         }
                         other => {
                             return Err(format!("Неподдерживаемое действие '{}' для бинда '{}'", other, hotkey_str));

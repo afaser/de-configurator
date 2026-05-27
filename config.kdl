@@ -8,15 +8,15 @@ feature "vpn" enabled=true {
     state "warp" {
         display-name "Warp"
         interface "w"
-        up-cmd "doas" "wg-quick" "up" "w"
-        down-cmd "doas" "wg-quick" "down" "w"
+        up-cmd "echo" "VPN Warp Up"
+        down-cmd "echo" "VPN Warp Down"
     }
 
     state "finland" {
         display-name "Финляндия"
         interface "fl"
-        up-cmd "doas" "wg-quick" "up" "fl"
-        down-cmd "doas" "wg-quick" "down" "fl"
+        up-cmd "echo" "VPN Finland Up"
+        down-cmd "echo" "VPN Finland Down"
     }
 }
 
@@ -29,6 +29,29 @@ feature "daemons" enabled=true {
     daemon "dunst" autostart=true {
         display-name "Dunst Notification Daemon"
         start-cmd "dunst"
+    }
+}
+
+feature "actions" enabled=true {
+    action "default-mode" {
+        vpn "finland"
+        daemon "picom" "on"
+    }
+
+    action "game-mode" {
+        vpn "warp"
+        daemon "picom" "off"
+    }
+}
+
+feature "triggers" enabled=true {
+    trigger "socket" type="socket" {
+        path "/tmp/de-configurator.sock"
+    }
+
+    trigger "periodic-check" type="interval" {
+        interval "1m"
+        run "notify-send" "DE Configurator" "Periodic 1m check"
     }
 }
 
@@ -51,12 +74,11 @@ feature "keybinds" enabled=true {
         run "alacritty"
     }
 
-    // Управление демонами (on/off/toggle)
-    bind "ctrl+shift+p" {
-        daemon "picom" "toggle"
+    bind "ctrl+shift+g" {
+        action "game-mode"
     }
 
     bind "ctrl+shift+d" {
-        daemon "dunst" "toggle"
+        action "default-mode"
     }
 }

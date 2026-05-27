@@ -5,6 +5,8 @@ mod features {
     pub mod vpn;
     pub mod keybinds;
     pub mod daemons;
+    pub mod actions;
+    pub mod triggers;
 }
 
 use std::path::PathBuf;
@@ -74,6 +76,44 @@ async fn main() {
         println!("Фича 'daemons' отключена в конфигурации.");
     }
 
+    // 3.7. Проверяем и запускаем фичу Actions (действия)
+    let actions_enabled = is_feature_enabled(&config_doc, "actions");
+    let mut actions_tx = None;
+    if actions_enabled {
+        match features::actions::ActionsFeature::start(&config_doc, vpn_tx.clone(), daemons_tx.clone()).await {
+            Ok(tx) => {
+                actions_tx = Some(tx);
+            }
+            Err(e) => {
+                eprintln!("Ошибка запуска Actions: {}", e);
+                let _ = notify_rust::Notification::new()
+                    .summary("Ошибка запуска Actions")
+                    .body(&e)
+                    .show();
+            }
+        }
+    } else {
+        println!("Фича 'actions' отключена в конфигурации.");
+    }
+
+    // 3.8. Проверяем и запускаем фичу Triggers (триггеры)
+    let triggers_enabled = is_feature_enabled(&config_doc, "triggers");
+    if triggers_enabled {
+        if let Some(ref tx) = actions_tx {
+            if let Err(e) = features::triggers::TriggersFeature::start(&config_doc, tx.clone()).await {
+                eprintln!("Ошибка запуска Triggers: {}", e);
+                let _ = notify_rust::Notification::new()
+                    .summary("Ошибка запуска Triggers")
+                    .body(&e)
+                    .show();
+            }
+        } else {
+            println!("Фича 'triggers' включена, но фича 'actions' отключена. Запуск триггеров невозможен.");
+        }
+    } else {
+        println!("Фича 'triggers' отключена в конфигурации.");
+    }
+
     // 4. Проверяем и запускаем фичу Keybinds (она регистрирует все хоткеи)
     let keybinds_enabled = is_feature_enabled(&config_doc, "keybinds");
     if keybinds_enabled {
@@ -83,6 +123,7 @@ async fn main() {
             &mut dispatcher,
             vpn_tx,
             daemons_tx,
+            actions_tx,
         ).await {
             eprintln!("Ошибка запуска Keybinds: {}", e);
             let _ = notify_rust::Notification::new()

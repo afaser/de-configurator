@@ -8,8 +8,9 @@ use global_hotkey::GlobalHotKeyManager;
 use crate::core::hotkey_dispatcher::HotkeyDispatcher;
 use crate::features::vpn::event::VpnInputEvent;
 use crate::features::daemons::event::DaemonInputEvent;
+use crate::features::actions::event::{ActionInputEvent, CommandAction};
 
-use config::{KeybindsConfig, KeybindAction};
+use config::KeybindsConfig;
 
 pub struct KeybindsFeature;
 
@@ -21,6 +22,7 @@ impl KeybindsFeature {
         dispatcher: &mut HotkeyDispatcher,
         vpn_tx: Option<mpsc::Sender<VpnInputEvent>>,
         daemons_tx: Option<mpsc::Sender<DaemonInputEvent>>,
+        actions_tx: Option<mpsc::Sender<ActionInputEvent>>,
     ) -> Result<(), String> {
         // 1. Парсим конфигурацию keybinds
         let config = KeybindsConfig::parse_from_root_doc(doc)?;
@@ -48,9 +50,10 @@ impl KeybindsFeature {
             println!("Фича Keybinds инициализирована. Зарегистрировано биндов: {}", config.binds.len());
             for bind in &config.binds {
                 match &bind.action {
-                    KeybindAction::Run(cmd) => println!("  {:18} -> run {:?}", bind.hotkey_str, cmd),
-                    KeybindAction::Vpn(state) => println!("  {:18} -> vpn '{}'", bind.hotkey_str, state),
-                    KeybindAction::Daemon(daemon_id, action) => println!("  {:18} -> daemon '{}' {:?}", bind.hotkey_str, daemon_id, action),
+                    CommandAction::Run(cmd) => println!("  {:18} -> run {:?}", bind.hotkey_str, cmd),
+                    CommandAction::Vpn(state) => println!("  {:18} -> vpn '{}'", bind.hotkey_str, state),
+                    CommandAction::Daemon(daemon_id, action) => println!("  {:18} -> daemon '{}' {:?}", bind.hotkey_str, daemon_id, action),
+                    CommandAction::Action(name) => println!("  {:18} -> action '{}'", bind.hotkey_str, name),
                 }
             }
 
@@ -68,7 +71,7 @@ impl KeybindsFeature {
                     }
 
                     match &b.action {
-                        KeybindAction::Run(cmd_parts) => {
+                        CommandAction::Run(cmd_parts) => {
                             if !cmd_parts.is_empty() {
                                 let mut cmd = tokio::process::Command::new(&cmd_parts[0]);
                                 cmd.args(&cmd_parts[1..]);
@@ -81,7 +84,7 @@ impl KeybindsFeature {
                                 }
                             }
                         }
-                        KeybindAction::Vpn(state_id) => {
+                        CommandAction::Vpn(state_id) => {
                             if let Some(ref tx) = vpn_tx {
                                 let _ = tx.send(VpnInputEvent::RequestStateSwitch(state_id.clone())).await;
                             } else {
@@ -92,7 +95,7 @@ impl KeybindsFeature {
                                     .show();
                             }
                         }
-                        KeybindAction::Daemon(daemon_id, action) => {
+                        CommandAction::Daemon(daemon_id, action) => {
                             if let Some(ref tx) = daemons_tx {
                                 let _ = tx.send(DaemonInputEvent::Control {
                                     daemon_id: daemon_id.clone(),
@@ -104,6 +107,17 @@ impl KeybindsFeature {
                                 let _ = notify_rust::Notification::new()
                                     .summary("Ошибка демонов")
                                     .body(&format!("Не удалось выполнить {:?} для '{}': фича Daemons отключена", action, daemon_id))
+                                    .show();
+                            }
+                        }
+                        CommandAction::Action(action_id) => {
+                            if let Some(ref tx) = actions_tx {
+                                let _ = tx.send(ActionInputEvent::ExecuteAction(action_id.clone())).await;
+                            } else {
+                                eprintln!("Ошибка: Запрошено действие '{}', но фича Actions отключена в конфигурации", action_id);
+                                let _ = notify_rust::Notification::new()
+                                    .summary("Ошибка вызова действия")
+                                    .body(&format!("Не удалось выполнить экшен '{}': фича Actions отключена", action_id))
                                     .show();
                             }
                         }
