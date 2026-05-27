@@ -57,7 +57,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: de-configurator-nix
-          path: result/bin/de-configurator
+          path: result/bin/
 
   release:
     name: Create GitHub Release
@@ -83,13 +83,13 @@ jobs:
         run: |
           mkdir -p release-assets
           cp ./artifacts-linux/de-configurator ./release-assets/de-configurator-linux-x86_64
-          cp ./artifacts-nix/de-configurator ./release-assets/de-configurator-nix-x86_64
+          tar -czf ./release-assets/de-configurator-nix-x86_64.tar.gz -C ./artifacts-nix .
 
       - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             release-assets/de-configurator-linux-x86_64
-            release-assets/de-configurator-nix-x86_64
+            release-assets/de-configurator-nix-x86_64.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
