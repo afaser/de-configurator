@@ -13,6 +13,7 @@ pub enum CommandAction {
     Vpn(String),
     Daemon(String, DaemonAction),
     Action(String),
+    Workspace(String, Option<String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +54,11 @@ pub enum SystemEvent {
         command: CommandAction,
         context: EventContext,
     },
+    RequestWorkspaceFocus {
+        workspace_id: String,
+        monitor_name: Option<String>,
+        context: EventContext,
+    },
 
     VpnTransitionStarted {
         state_id: String,
@@ -85,6 +91,30 @@ pub enum SystemEvent {
         error: String,
         context: EventContext,
     },
+
+    WmMonitorFocused {
+        monitor_name: String,
+        context: EventContext,
+    },
+    WmDesktopFocused {
+        monitor_name: String,
+        desktop_name: String,
+        context: EventContext,
+    },
+    WmNodeFocused {
+        monitor_name: String,
+        desktop_name: String,
+        node_id: String,
+        class_name: Option<String>,
+        context: EventContext,
+    },
+    WmNodeAdded {
+        monitor_name: String,
+        desktop_name: String,
+        node_id: String,
+        class_name: Option<String>,
+        context: EventContext,
+    },
 }
 
 impl SystemEvent {
@@ -96,11 +126,16 @@ impl SystemEvent {
             SystemEvent::RequestActionExecute { context, .. } => context,
             SystemEvent::RequestActionExecuteExported { context, .. } => context,
             SystemEvent::RequestCommandExecute { context, .. } => context,
+            SystemEvent::RequestWorkspaceFocus { context, .. } => context,
             SystemEvent::VpnTransitionStarted { context, .. } => context,
             SystemEvent::VpnStateChanged { context, .. } => context,
             SystemEvent::VpnStateTransitionFailed { context, .. } => context,
             SystemEvent::DaemonStateChanged { context, .. } => context,
             SystemEvent::DaemonStateTransitionFailed { context, .. } => context,
+            SystemEvent::WmMonitorFocused { context, .. } => context,
+            SystemEvent::WmDesktopFocused { context, .. } => context,
+            SystemEvent::WmNodeFocused { context, .. } => context,
+            SystemEvent::WmNodeAdded { context, .. } => context,
         }
     }
 }

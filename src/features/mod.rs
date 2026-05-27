@@ -4,6 +4,8 @@ pub mod daemons;
 pub mod actions;
 pub mod triggers;
 pub mod ipc;
+pub mod wm;
+pub mod workspaces;
 
 use std::sync::Arc;
 use kdl::KdlDocument;
@@ -46,6 +48,18 @@ pub async fn start_all(
         ipc::IpcFeature::start(doc, event_bus.clone()).await?;
     } else {
         println!("Фича 'ipc' отключена в конфигурации.");
+    }
+
+    if is_feature_enabled(doc, "wm") {
+        wm::WmFeature::start(doc, event_bus.clone()).await?;
+    } else {
+        println!("Фича 'wm' отключена в конфигурации.");
+    }
+
+    if is_feature_enabled(doc, "workspaces") {
+        workspaces::WorkspacesFeature::start(doc, event_bus.clone()).await?;
+    } else {
+        println!("Фича 'workspaces' отключена в конфигурации.");
     }
 
     if is_feature_enabled(doc, "keybinds") {

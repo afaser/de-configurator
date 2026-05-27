@@ -3,6 +3,24 @@ use std::str::FromStr;
 use global_hotkey::hotkey::HotKey;
 use crate::core::event_bus::{CommandAction, DaemonAction};
 
+fn normalize_hotkey_str(s: &str) -> String {
+    s.split('+')
+        .map(|part| {
+            let p = part.trim().to_lowercase();
+            match p.as_str() {
+                "mediaplaypause" | "playpause" | "audioplay" | "xf86audioplay" => "mediaplay".to_string(),
+                "xf86audionext" | "audionext" => "mediatracknext".to_string(),
+                "xf86audioprev" | "xf86audioprevious" | "audioprev" | "audioprevious" => "mediatrackprevious".to_string(),
+                "xf86audioraisevolume" | "audioraisevolume" | "volumeup" => "audiovolumeup".to_string(),
+                "xf86audiolowervolume" | "audiolowervolume" | "volumedown" => "audiovolumedown".to_string(),
+                "xf86audiomute" | "mute" => "audiovolumemute".to_string(),
+                other => other.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
 #[derive(Debug, Clone)]
 pub struct KeybindConfig {
     pub hotkey_str: String,
@@ -35,7 +53,7 @@ impl KeybindsConfig {
 
                     let child_node = node.children()
                         .and_then(|c| c.nodes().first())
-                        .ok_or_else(|| format!("У бинда '{}' должно быть указано действие (run, vpn, daemon или action)", hotkey_str))?;
+                        .ok_or_else(|| format!("У бинда '{}' должно быть указано действие (run, vpn, daemon, action или workspace)", hotkey_str))?;
 
                     let action = match child_node.name().value() {
                         "run" => {
@@ -80,12 +98,22 @@ impl KeybindsConfig {
                                 .to_string();
                             CommandAction::Action(action_id)
                         }
+                        "workspace" => {
+                            let ws_id = child_node.entries().get(0)
+                                .and_then(|e| e.value().as_string())
+                                .ok_or_else(|| format!("У действия workspace для бинда '{}' не указано целевое рабочее пространство", hotkey_str))?
+                                .to_string();
+                            let monitor = child_node.entries().get(1)
+                                .and_then(|e| e.value().as_string())
+                                .map(|s| s.to_string());
+                            CommandAction::Workspace(ws_id, monitor)
+                        }
                         other => {
                             return Err(format!("Неподдерживаемое действие '{}' для бинда '{}'", other, hotkey_str));
                         }
                     };
 
-                    let clean_hotkey_str = hotkey_str.to_lowercase();
+                    let clean_hotkey_str = normalize_hotkey_str(&hotkey_str);
                     let hotkey = HotKey::from_str(&clean_hotkey_str)
                         .map_err(|e| format!("Не удалось распарсить хоткей '{}': {:?}", hotkey_str, e))?;
 

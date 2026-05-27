@@ -99,6 +99,16 @@ impl ActionsConfig {
                                         .to_string();
                                     CommandAction::Action(target_action)
                                 }
+                                "workspace" => {
+                                    let target_ws = cmd_node.entries().get(0)
+                                        .and_then(|e| e.value().as_string())
+                                        .ok_or_else(|| format!("У действия workspace в экшене '{}' не указано целевое рабочее пространство", id))?
+                                        .to_string();
+                                    let monitor = cmd_node.entries().get(1)
+                                        .and_then(|e| e.value().as_string())
+                                        .map(|s| s.to_string());
+                                    CommandAction::Workspace(target_ws, monitor)
+                                }
                                 other => {
                                     return Err(format!(
                                         "Неизвестная команда '{}' в экшене '{}'",

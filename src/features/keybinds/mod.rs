@@ -1,7 +1,6 @@
 mod config;
 
 use std::sync::Arc;
-use std::collections::HashMap;
 use tokio::sync::mpsc;
 use kdl::KdlDocument;
 use global_hotkey::GlobalHotKeyManager;
@@ -24,19 +23,17 @@ impl KeybindsFeature {
         let (local_tx, mut local_rx) = mpsc::channel::<u32>(100);
 
         for bind in &config.binds {
-            manager
-                .register(bind.hotkey)
-                .map_err(|e| format!("Не удалось зарегистрировать хоткей '{}': {:?}", bind.hotkey_str, e))?;
-            
-            dispatcher.register(bind.hotkey.id(), local_tx.clone());
+            match manager.register(bind.hotkey) {
+                Ok(_) => {
+                    dispatcher.register(bind.hotkey.id(), local_tx.clone());
+                }
+                Err(e) => {
+                    eprintln!("Предупреждение: Не удалось зарегистрировать хоткей '{}': {:?}", bind.hotkey_str, e);
+                }
+            }
         }
 
         tokio::spawn(async move {
-            let mut last_triggers = HashMap::new();
-            for bind in &config.binds {
-                last_triggers.insert(bind.hotkey.id(), tokio::time::Instant::now() - std::time::Duration::from_secs(5));
-            }
-
             println!("Фича Keybinds инициализирована. Зарегистрировано биндов: {}", config.binds.len());
             for bind in &config.binds {
                 match &bind.action {
@@ -44,21 +41,19 @@ impl KeybindsFeature {
                     CommandAction::Vpn(state) => println!("  {:18} -> vpn '{}'", bind.hotkey_str, state),
                     CommandAction::Daemon(daemon_id, action) => println!("  {:18} -> daemon '{}' {:?}", bind.hotkey_str, daemon_id, action),
                     CommandAction::Action(name) => println!("  {:18} -> action '{}'", bind.hotkey_str, name),
+                    CommandAction::Workspace(ws_id, mon) => {
+                        if let Some(m) = mon {
+                            println!("  {:18} -> workspace '{}' on monitor '{}'", bind.hotkey_str, ws_id, m);
+                        } else {
+                            println!("  {:18} -> workspace '{}'", bind.hotkey_str, ws_id);
+                        }
+                    }
                 }
             }
 
             while let Some(event_id) = local_rx.recv().await {
                 let bind = config.binds.iter().find(|b| b.hotkey.id() == event_id);
                 if let Some(b) = bind {
-                    let now = tokio::time::Instant::now();
-                    
-                    if let Some(last_trigger) = last_triggers.get_mut(&event_id) {
-                        if now.duration_since(*last_trigger) < std::time::Duration::from_secs(1) {
-                            continue;
-                        }
-                        *last_trigger = now;
-                    }
-
                     let context = EventContext {
                         initiator: Initiator::Keybind,
                         silent: false,
@@ -87,6 +82,13 @@ impl KeybindsFeature {
                         CommandAction::Action(action_id) => {
                             event_bus.publish(SystemEvent::RequestActionExecute {
                                 action_id: action_id.clone(),
+                                context,
+                            });
+                        }
+                        CommandAction::Workspace(ws_id, monitor_name) => {
+                            event_bus.publish(SystemEvent::RequestWorkspaceFocus {
+                                workspace_id: ws_id.clone(),
+                                monitor_name: monitor_name.clone(),
                                 context,
                             });
                         }

@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use crate::core::event_bus::{EventBus, SystemEvent, CommandAction, DaemonAction, EventContext, Initiator};
 
-
 pub trait Command: Send + Sync {
     fn execute<'a>(
         &'a self,
@@ -103,6 +102,30 @@ impl Command for ActionReferenceCommand {
     }
 }
 
+pub struct WorkspaceFocusCommand {
+    pub workspace_id: String,
+    pub monitor_name: Option<String>,
+}
+
+impl Command for WorkspaceFocusCommand {
+    fn execute<'a>(
+        &'a self,
+        context: &'a EventContext,
+        event_bus: &'a EventBus,
+        _registry: &'a ActionRegistry,
+        _depth: usize,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+        Box::pin(async move {
+            event_bus.publish(SystemEvent::RequestWorkspaceFocus {
+                workspace_id: self.workspace_id.clone(),
+                monitor_name: self.monitor_name.clone(),
+                context: context.clone(),
+            });
+            Ok(())
+        })
+    }
+}
+
 pub struct ActionExpression {
     pub id: String,
     pub export: bool,
@@ -124,6 +147,7 @@ impl ActionRegistry {
                     CommandAction::Vpn(state_id) => Box::new(VpnSwitchCommand { state_id }),
                     CommandAction::Daemon(daemon_id, action) => Box::new(DaemonControlCommand { daemon_id, action }),
                     CommandAction::Action(action_id) => Box::new(ActionReferenceCommand { action_id }),
+                    CommandAction::Workspace(workspace_id, monitor_name) => Box::new(WorkspaceFocusCommand { workspace_id, monitor_name }),
                 };
                 commands.push(box_cmd);
             }
@@ -265,6 +289,7 @@ impl ActionsFeature {
                                 CommandAction::Vpn(state_id) => Box::new(VpnSwitchCommand { state_id }),
                                 CommandAction::Daemon(daemon_id, action) => Box::new(DaemonControlCommand { daemon_id, action }),
                                 CommandAction::Action(action_id) => Box::new(ActionReferenceCommand { action_id }),
+                                CommandAction::Workspace(workspace_id, monitor_name) => Box::new(WorkspaceFocusCommand { workspace_id, monitor_name }),
                             };
                             let _ = cmd_obj.execute(&context, &bus, &registry, 0).await;
                         });

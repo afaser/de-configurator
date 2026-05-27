@@ -3,7 +3,15 @@ use crate::core::event_bus::{CommandAction, DaemonAction};
 
 #[derive(Debug, Clone)]
 pub enum TriggerType {
-    Interval { duration: std::time::Duration },
+    Interval {
+        duration: std::time::Duration,
+    },
+    Wm {
+        event_type: String,
+        desktop: Option<String>,
+        monitor: Option<String>,
+        class: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -45,69 +53,74 @@ impl TriggersConfig {
                         .and_then(|e| e.value().as_string())
                         .ok_or_else(|| format!("У триггера '{}' должен быть тип type", id))?;
 
-                    if type_str != "interval" {
-                        return Err(format!("Неподдерживаемый тип триггера '{}' у '{}'. В триггерах поддерживается только type=\"interval\"", type_str, id));
-                    }
-
-                    let mut duration = None;
                     let mut trigger_command = None;
 
-                    if let Some(trigger_children) = trigger_node.children() {
-                        for child in trigger_children.nodes() {
-                            match child.name().value() {
-                                "interval" => {
-                                    let duration_str = child.entries().get(0)
-                                        .and_then(|e| e.value().as_string())
-                                        .ok_or_else(|| format!("У триггера '{}' должно быть указано время интервала", id))?;
-                                    duration = Some(parse_duration(duration_str)?);
+                    let t_type = if type_str == "interval" {
+                        let mut duration = None;
+                        if let Some(trigger_children) = trigger_node.children() {
+                            for child in trigger_children.nodes() {
+                                match child.name().value() {
+                                    "interval" => {
+                                        let duration_str = child.entries().get(0)
+                                            .and_then(|e| e.value().as_string())
+                                            .ok_or_else(|| format!("У триггера '{}' должно быть указано время интервала", id))?;
+                                        duration = Some(parse_duration(duration_str)?);
+                                    }
+                                    "run" | "vpn" | "daemon" | "action" | "workspace" => {
+                                        trigger_command = Some(parse_command(child, id.as_str())?);
+                                    }
+                                    _ => {}
                                 }
-                                "run" => {
-                                    let parts: Vec<String> = child.entries().iter()
-                                        .filter_map(|e| e.value().as_string().map(String::from))
-                                        .collect();
-                                    trigger_command = Some(CommandAction::Run(parts));
-                                }
-                                "vpn" => {
-                                    let state = child.entries().get(0)
-                                        .and_then(|e| e.value().as_string())
-                                        .ok_or_else(|| format!("У триггера '{}' не указано состояние vpn", id))?
-                                        .to_string();
-                                    trigger_command = Some(CommandAction::Vpn(state));
-                                }
-                                "daemon" => {
-                                    let daemon_id = child.entries().get(0)
-                                        .and_then(|e| e.value().as_string())
-                                        .ok_or_else(|| format!("У триггера '{}' не указан ID демона", id))?
-                                        .to_string();
-                                    let action_str = child.entries().get(1)
-                                        .and_then(|e| e.value().as_string())
-                                        .ok_or_else(|| format!("У триггера '{}' не указано действие демона", id))?;
-                                    let daemon_action = match action_str {
-                                        "on" => DaemonAction::On,
-                                        "off" => DaemonAction::Off,
-                                        "toggle" => DaemonAction::Toggle,
-                                        other => return Err(format!("Неподдерживаемое действие демона '{}' в триггере '{}'", other, id)),
-                                    };
-                                    trigger_command = Some(CommandAction::Daemon(daemon_id, daemon_action));
-                                }
-                                "action" => {
-                                    let action_name = child.entries().get(0)
-                                        .and_then(|e| e.value().as_string())
-                                        .ok_or_else(|| format!("У триггера '{}' не указано действие для вызова", id))?
-                                        .to_string();
-                                    trigger_command = Some(CommandAction::Action(action_name));
-                                }
-                                other => return Err(format!("Неподдерживаемый узел '{}' в триггере '{}'", other, id)),
                             }
                         }
-                    }
+                        let dur = duration.ok_or_else(|| format!("У интервального триггера '{}' должен быть указан интервал (например, interval \"5m\")", id))?;
+                        TriggerType::Interval { duration: dur }
+                    } else if type_str == "wm" {
+                        let mut event_type = None;
+                        let mut desktop = None;
+                        let mut monitor = None;
+                        let mut class = None;
+                        if let Some(trigger_children) = trigger_node.children() {
+                            for child in trigger_children.nodes() {
+                                match child.name().value() {
+                                    "event" => {
+                                        event_type = child.entries().get(0)
+                                            .and_then(|e| e.value().as_string())
+                                            .map(|s| s.to_string());
+                                    }
+                                    "desktop" => {
+                                        desktop = child.entries().get(0)
+                                            .and_then(|e| e.value().as_string())
+                                            .map(|s| s.to_string());
+                                    }
+                                    "monitor" => {
+                                        monitor = child.entries().get(0)
+                                            .and_then(|e| e.value().as_string())
+                                            .map(|s| s.to_string());
+                                    }
+                                    "class" => {
+                                        class = child.entries().get(0)
+                                            .and_then(|e| e.value().as_string())
+                                            .map(|s| s.to_string());
+                                    }
+                                    "run" | "vpn" | "daemon" | "action" | "workspace" => {
+                                        trigger_command = Some(parse_command(child, id.as_str())?);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        let et = event_type.ok_or_else(|| format!("У WM триггера '{}' должно быть указано событие (например, event \"desktop_focus\")", id))?;
+                        TriggerType::Wm { event_type: et, desktop, monitor, class }
+                    } else {
+                        return Err(format!("Неподдерживаемый тип триггера '{}' у '{}'", type_str, id));
+                    };
 
-                    let dur = duration.ok_or_else(|| format!("У интервального триггера '{}' должен быть указан интервал (например, interval \"5m\")", id))?;
-                    let cmd = trigger_command.ok_or_else(|| format!("У интервального триггера '{}' должно быть указано выполняемое действие (run, vpn, daemon или action)", id))?;
+                    let cmd = trigger_command.ok_or_else(|| format!("У триггера '{}' должно быть указано выполняемое действие (run, vpn, daemon, action или workspace)", id))?;
 
                     triggers.push(TriggerConfig {
                         id,
-                        trigger_type: TriggerType::Interval { duration: dur },
+                        trigger_type: t_type,
                         command: cmd,
                     });
                 }
@@ -115,6 +128,61 @@ impl TriggersConfig {
         }
 
         Ok(TriggersConfig { triggers })
+    }
+}
+
+fn parse_command(child: &kdl::KdlNode, id: &str) -> Result<CommandAction, String> {
+    match child.name().value() {
+        "run" => {
+            let parts: Vec<String> = child.entries().iter()
+                .filter_map(|e| e.value().as_string().map(String::from))
+                .collect();
+            if parts.is_empty() {
+                return Err(format!("У действия run в триггере '{}' не указана команда", id));
+            }
+            Ok(CommandAction::Run(parts))
+        }
+        "vpn" => {
+            let state = child.entries().get(0)
+                .and_then(|e| e.value().as_string())
+                .ok_or_else(|| format!("У действия vpn в триггере '{}' не указано состояние", id))?
+                .to_string();
+            Ok(CommandAction::Vpn(state))
+        }
+        "daemon" => {
+            let daemon_id = child.entries().get(0)
+                .and_then(|e| e.value().as_string())
+                .ok_or_else(|| format!("У действия daemon в триггере '{}' не указан ID", id))?
+                .to_string();
+            let action_str = child.entries().get(1)
+                .and_then(|e| e.value().as_string())
+                .ok_or_else(|| format!("У действия daemon в триггере '{}' не указано действие", id))?;
+            let daemon_action = match action_str {
+                "on" => DaemonAction::On,
+                "off" => DaemonAction::Off,
+                "toggle" => DaemonAction::Toggle,
+                other => return Err(format!("Неподдерживаемое действие демона '{}' в триггере '{}'", other, id)),
+            };
+            Ok(CommandAction::Daemon(daemon_id, daemon_action))
+        }
+        "action" => {
+            let action_name = child.entries().get(0)
+                .and_then(|e| e.value().as_string())
+                .ok_or_else(|| format!("У действия action в триггере '{}' не указано действие для вызова", id))?
+                .to_string();
+            Ok(CommandAction::Action(action_name))
+        }
+        "workspace" => {
+            let ws_name = child.entries().get(0)
+                .and_then(|e| e.value().as_string())
+                .ok_or_else(|| format!("У действия workspace в триггере '{}' не указан ID воркспейса", id))?
+                .to_string();
+            let monitor = child.entries().get(1)
+                .and_then(|e| e.value().as_string())
+                .map(|s| s.to_string());
+            Ok(CommandAction::Workspace(ws_name, monitor))
+        }
+        other => Err(format!("Неподдерживаемый узел '{}' в триггере '{}'", other, id)),
     }
 }
 

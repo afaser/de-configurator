@@ -30,8 +30,10 @@ impl HotkeyDispatcher {
             
             loop {
                 if let Ok(event) = receiver.recv() {
-                    if let Some(tx) = routes.get(&event.id) {
-                        let _ = tx.blocking_send(event.id);
+                    if event.state == global_hotkey::HotKeyState::Pressed {
+                        if let Some(tx) = routes.get(&event.id) {
+                            let _ = tx.blocking_send(event.id);
+                        }
                     }
                 }
             }
