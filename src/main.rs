@@ -7,6 +7,7 @@ mod features {
     pub mod daemons;
     pub mod actions;
     pub mod triggers;
+    pub mod ipc;
 }
 
 use std::path::PathBuf;
@@ -112,6 +113,24 @@ async fn main() {
         }
     } else {
         println!("Фича 'triggers' отключена в конфигурации.");
+    }
+
+    // 3.9. Проверяем и запускаем фичу IPC (сокет-сервер)
+    let ipc_enabled = is_feature_enabled(&config_doc, "ipc");
+    if ipc_enabled {
+        if let Some(ref tx) = actions_tx {
+            if let Err(e) = features::ipc::IpcFeature::start(&config_doc, tx.clone()).await {
+                eprintln!("Ошибка запуска IPC: {}", e);
+                let _ = notify_rust::Notification::new()
+                    .summary("Ошибка запуска IPC")
+                    .body(&e)
+                    .show();
+            }
+        } else {
+            println!("Фича 'ipc' включена, но фича 'actions' отключена. Запуск IPC невозможен.");
+        }
+    } else {
+        println!("Фича 'ipc' отключена в конфигурации.");
     }
 
     // 4. Проверяем и запускаем фичу Keybinds (она регистрирует все хоткеи)

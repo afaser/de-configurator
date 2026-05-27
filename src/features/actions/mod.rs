@@ -30,6 +30,22 @@ impl ActionsFeature {
                     ActionInputEvent::ExecuteAction(action_id) => {
                         execute_action_recursive(&action_id, 0, &config, &vpn_tx, &daemons_tx).await;
                     }
+                    ActionInputEvent::ExecuteExportedAction(action_id) => {
+                        let is_exported = config.actions.iter()
+                            .find(|a| a.id == action_id)
+                            .map(|a| a.export)
+                            .unwrap_or(false);
+
+                        if is_exported {
+                            execute_action_recursive(&action_id, 0, &config, &vpn_tx, &daemons_tx).await;
+                        } else {
+                            eprintln!("Ошибка безопасности: экшен '{}' не экспортирован (export true) для внешнего вызова", action_id);
+                            let _ = notify_rust::Notification::new()
+                                .summary("Ошибка безопасности")
+                                .body(&format!("Экшен '{}' не экспортирован для внешнего вызова", action_id))
+                                .show();
+                        }
+                    }
                     ActionInputEvent::ExecuteCommand(cmd) => {
                         execute_single_command(&cmd, &config, &vpn_tx, &daemons_tx).await;
                     }

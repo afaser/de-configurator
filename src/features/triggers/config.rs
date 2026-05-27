@@ -4,7 +4,6 @@ use crate::features::daemons::event::DaemonAction;
 
 #[derive(Debug, Clone)]
 pub enum TriggerType {
-    Socket { path: Option<String> },
     Interval { duration: std::time::Duration },
 }
 
@@ -12,7 +11,7 @@ pub enum TriggerType {
 pub struct TriggerConfig {
     pub id: String,
     pub trigger_type: TriggerType,
-    pub command: Option<CommandAction>,
+    pub command: CommandAction,
 }
 
 #[derive(Debug, Clone)]
@@ -48,18 +47,16 @@ impl TriggersConfig {
                         .and_then(|e| e.value().as_string())
                         .ok_or_else(|| format!("У триггера '{}' должен быть тип type", id))?;
 
-                    let mut path = None;
+                    if type_str != "interval" {
+                        return Err(format!("Неподдерживаемый тип триггера '{}' у '{}'. В триггерах поддерживается только type=\"interval\"", type_str, id));
+                    }
+
                     let mut duration = None;
                     let mut trigger_command = None;
 
                     if let Some(trigger_children) = trigger_node.children() {
                         for child in trigger_children.nodes() {
                             match child.name().value() {
-                                "path" => {
-                                    path = child.entries().get(0)
-                                        .and_then(|e| e.value().as_string())
-                                        .map(String::from);
-                                }
                                 "interval" => {
                                     let duration_str = child.entries().get(0)
                                         .and_then(|e| e.value().as_string())
@@ -107,22 +104,13 @@ impl TriggersConfig {
                         }
                     }
 
-                    let trigger_type = match type_str {
-                        "socket" => TriggerType::Socket { path },
-                        "interval" => {
-                            let dur = duration.ok_or_else(|| format!("У интервального триггера '{}' должен быть указан интервал (например, interval \"5m\")", id))?;
-                            if trigger_command.is_none() {
-                                return Err(format!("У интервального триггера '{}' должно быть указано выполняемое действие (run, vpn, daemon или action)", id));
-                            }
-                            TriggerType::Interval { duration: dur }
-                        }
-                        other => return Err(format!("Неизвестный тип триггера '{}' у '{}'", other, id)),
-                    };
+                    let dur = duration.ok_or_else(|| format!("У интервального триггера '{}' должен быть указан интервал (например, interval \"5m\")", id))?;
+                    let cmd = trigger_command.ok_or_else(|| format!("У интервального триггера '{}' должно быть указано выполняемое действие (run, vpn, daemon или action)", id))?;
 
                     triggers.push(TriggerConfig {
                         id,
-                        trigger_type,
-                        command: trigger_command,
+                        trigger_type: TriggerType::Interval { duration: dur },
+                        command: cmd,
                     });
                 }
             }

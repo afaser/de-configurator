@@ -11,5 +11,6 @@ pub enum CommandAction {
 #[derive(Debug, Clone)]
 pub enum ActionInputEvent {
     ExecuteAction(String),
+    ExecuteExportedAction(String),
     ExecuteCommand(CommandAction),
 }

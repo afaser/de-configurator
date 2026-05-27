@@ -1,5 +1,3 @@
-// Конфигурационный файл для de-configurator
-
 feature "vpn" enabled=true {
     state "off" {
         display-name "VPN выключен"
@@ -33,22 +31,22 @@ feature "daemons" enabled=true {
 }
 
 feature "actions" enabled=true {
-    action "default-mode" {
+    action "default-mode" export=true {
         vpn "finland"
         daemon "picom" "on"
     }
 
-    action "game-mode" {
+    action "game-mode" export=false {
         vpn "warp"
         daemon "picom" "off"
     }
 }
 
-feature "triggers" enabled=true {
-    trigger "socket" type="socket" {
-        path "/tmp/de-configurator.sock"
-    }
+feature "ipc" enabled=true {
+    path "/tmp/de-configurator.sock"
+}
 
+feature "triggers" enabled=true {
     trigger "periodic-check" type="interval" {
         interval "1m"
         run "notify-send" "DE Configurator" "Periodic 1m check"
@@ -56,7 +54,6 @@ feature "triggers" enabled=true {
 }
 
 feature "keybinds" enabled=true {
-    // Управление VPN (события передаются в VPN модуль)
     bind "ctrl+shift+f9" {
         vpn "off"
     }
@@ -67,11 +64,6 @@ feature "keybinds" enabled=true {
 
     bind "ctrl+shift+f11" {
         vpn "finland"
-    }
-
-    // Запуск внешних приложений
-    bind "ctrl+shift+t" {
-        run "alacritty"
     }
 
     bind "ctrl+shift+g" {

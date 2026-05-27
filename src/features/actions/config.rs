@@ -5,6 +5,7 @@ use kdl::KdlDocument;
 #[derive(Debug, Clone)]
 pub struct ActionConfig {
     pub id: String,
+    pub export: bool,
     pub commands: Vec<CommandAction>,
 }
 
@@ -39,6 +40,11 @@ impl ActionsConfig {
                             "У узла action должен быть строковый идентификатор".to_string()
                         })?
                         .to_string();
+
+                    let export = action_node.entries().iter()
+                        .find(|e| e.name().map(|i| i.value()) == Some("export"))
+                        .and_then(|e| e.value().as_bool())
+                        .unwrap_or(false);
 
                     let mut commands = Vec::new();
 
@@ -120,7 +126,7 @@ impl ActionsConfig {
                         }
                     }
 
-                    actions.push(ActionConfig { id, commands });
+                    actions.push(ActionConfig { id, export, commands });
                 }
             }
         }
