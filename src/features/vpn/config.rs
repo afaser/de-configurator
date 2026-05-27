@@ -1,12 +1,8 @@
 use kdl::KdlDocument;
-use std::str::FromStr;
-use global_hotkey::hotkey::HotKey;
 
 #[derive(Debug, Clone)]
 pub struct VpnStateConfig {
     pub id: String,
-    pub hotkey_str: String,
-    pub hotkey: HotKey,
     pub display_name: String,
     pub interface: Option<String>,
     pub up_cmd: Vec<String>,
@@ -37,7 +33,6 @@ impl VpnConfig {
                         .ok_or_else(|| "У узла state должен быть строковый идентификатор".to_string())?
                         .to_string();
 
-                    let mut hotkey_str = String::new();
                     let mut display_name = id.clone();
                     let mut interface = None;
                     let mut up_cmd = Vec::new();
@@ -46,12 +41,6 @@ impl VpnConfig {
                     if let Some(state_children) = node.children() {
                         for child in state_children.nodes() {
                             match child.name().value() {
-                                "hotkey" => {
-                                    hotkey_str = child.entries().get(0)
-                                        .and_then(|e| e.value().as_string())
-                                        .unwrap_or("")
-                                        .to_string();
-                                }
                                 "display-name" => {
                                     display_name = child.entries().get(0)
                                         .and_then(|e| e.value().as_string())
@@ -78,18 +67,8 @@ impl VpnConfig {
                         }
                     }
 
-                    if hotkey_str.is_empty() {
-                        return Err(format!("У узла state '{}' должен быть указан hotkey", id));
-                    }
-
-                    let clean_hotkey_str = hotkey_str.to_lowercase();
-                    let hotkey = HotKey::from_str(&clean_hotkey_str)
-                        .map_err(|e| format!("Не удалось распарсить хоткей '{}' для состояния '{}': {:?}", hotkey_str, id, e))?;
-
                     states.push(VpnStateConfig {
                         id,
-                        hotkey_str,
-                        hotkey,
                         display_name,
                         interface,
                         up_cmd,

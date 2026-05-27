@@ -2,12 +2,10 @@
 
 feature "vpn" enabled=true {
     state "off" {
-        hotkey "ctrl+shift+f9"
         display-name "VPN выключен"
     }
 
     state "warp" {
-        hotkey "ctrl+shift+f10"
         display-name "Warp"
         interface "w"
         up-cmd "doas" "wg-quick" "up" "w"
@@ -15,10 +13,29 @@ feature "vpn" enabled=true {
     }
 
     state "finland" {
-        hotkey "ctrl+shift+f11"
         display-name "Финляндия"
         interface "fl"
         up-cmd "doas" "wg-quick" "up" "fl"
         down-cmd "doas" "wg-quick" "down" "fl"
+    }
+}
+
+feature "keybinds" enabled=true {
+    // Управление VPN (события передаются в VPN модуль)
+    bind "ctrl+shift+f9" {
+        vpn "off"
+    }
+
+    bind "ctrl+shift+f10" {
+        vpn "warp"
+    }
+
+    bind "ctrl+shift+f11" {
+        vpn "finland"
+    }
+
+    // Запуск внешних приложений
+    bind "ctrl+shift+t" {
+        run "alacritty"
     }
 }

@@ -1,9 +1,16 @@
+mod core {
+    pub mod hotkey_dispatcher;
+}
 mod features {
     pub mod vpn;
+    pub mod keybinds;
 }
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use kdl::KdlDocument;
+use global_hotkey::GlobalHotKeyManager;
+use core::hotkey_dispatcher::HotkeyDispatcher;
 
 #[tokio::main]
 async fn main() {
@@ -22,24 +29,48 @@ async fn main() {
 
     println!("Конфигурация успешно загружена из: {}", config_path.display());
 
-    // 2. Проверяем и запускаем фичу VPN
+    // 2. Инициализируем глобальный HotKeyManager и HotkeyDispatcher
+    let hotkey_manager = Arc::new(GlobalHotKeyManager::new().unwrap());
+    let mut dispatcher = HotkeyDispatcher::new(hotkey_manager.clone());
+
+    // 3. Проверяем и запускаем фичу VPN (теперь она чисто реактивная, без хоткеев)
     let vpn_enabled = is_feature_enabled(&config_doc, "vpn");
+    let mut vpn_tx = None;
     if vpn_enabled {
-        if let Err(e) = features::vpn::VpnFeature::start(&config_doc).await {
-            eprintln!("Ошибка запуска VPN: {}", e);
+        match features::vpn::VpnFeature::start(&config_doc).await {
+            Ok(tx) => {
+                vpn_tx = Some(tx);
+            }
+            Err(e) => {
+                eprintln!("Ошибка запуска VPN: {}", e);
+                let _ = notify_rust::Notification::new()
+                    .summary("Ошибка запуска VPN")
+                    .body(&e)
+                    .show();
+            }
+        }
+    } else {
+        println!("Фича 'vpn' отключена в конфигурации.");
+    }
+
+    // 4. Проверяем и запускаем фичу Keybinds (она регистрирует все хоткеи)
+    let keybinds_enabled = is_feature_enabled(&config_doc, "keybinds");
+    if keybinds_enabled {
+        if let Err(e) = features::keybinds::KeybindsFeature::start(&config_doc, hotkey_manager.clone(), &mut dispatcher, vpn_tx).await {
+            eprintln!("Ошибка запуска Keybinds: {}", e);
             let _ = notify_rust::Notification::new()
-                .summary("Ошибка запуска VPN")
+                .summary("Ошибка запуска Keybinds")
                 .body(&e)
                 .show();
         }
     } else {
-        println!("Фича 'vpn' отключена в конфигурации (пропишите enabled=true для запуска).");
+        println!("Фича 'keybinds' отключена в конфигурации.");
     }
 
-    // Здесь в будущем можно добавить запуск других фич аналогично:
-    // if is_feature_enabled(&config_doc, "brightness") { ... }
+    // 5. Запускаем диспетчер событий клавиатуры
+    dispatcher.start();
 
-    // 3. Удерживаем программу запущенной (ждем Ctrl+C)
+    // 6. Удерживаем программу запущенной (ждем Ctrl+C)
     println!("Приложение запущено. Нажмите Ctrl+C для выхода.");
     let _ = tokio::signal::ctrl_c().await;
     println!("Завершение работы...");
@@ -86,12 +117,10 @@ fn get_config_doc() -> Result<(KdlDocument, PathBuf), String> {
 
 feature "vpn" enabled=true {
     state "off" {
-        hotkey "ctrl+shift+f9"
         display-name "VPN выключен"
     }
 
     state "warp" {
-        hotkey "ctrl+shift+f10"
         display-name "Warp"
         interface "w"
         up-cmd "doas" "wg-quick" "up" "w"
@@ -99,11 +128,27 @@ feature "vpn" enabled=true {
     }
 
     state "finland" {
-        hotkey "ctrl+shift+f11"
         display-name "Финляндия"
         interface "fl"
         up-cmd "doas" "wg-quick" "up" "fl"
         down-cmd "doas" "wg-quick" "down" "fl"
+    }
+}
+
+feature "keybinds" enabled=true {
+    // Открыть терминал
+    bind "ctrl+shift+t" {
+        run "alacritty"
+    }
+    
+    // Переключить VPN на Warp
+    bind "ctrl+shift+w" {
+        vpn "warp"
+    }
+
+    // Выключить VPN
+    bind "ctrl+shift+o" {
+        vpn "off"
     }
 }
 "#;

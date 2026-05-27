@@ -1,6 +1,5 @@
 pub mod config;
 pub mod event;
-pub mod hotkey;
 pub mod manager;
 pub mod notifier;
 
@@ -12,7 +11,6 @@ use kdl::KdlDocument;
 
 use config::VpnConfig;
 use event::{VpnInputEvent, VpnDomainEvent};
-use hotkey::HotkeyListener;
 use manager::VpnManager;
 use notifier::VpnNotificationService;
 
@@ -20,32 +18,25 @@ pub struct VpnFeature;
 
 impl VpnFeature {
     /// Запуск фичи VPN на основе переданного KDL-документа конфигурации
-    pub async fn start(doc: &KdlDocument) -> Result<(), String> {
+    pub async fn start(
+        doc: &KdlDocument,
+    ) -> Result<mpsc::Sender<VpnInputEvent>, String> {
         // 1. Парсим настройки VPN
         let vpn_config = VpnConfig::parse_from_root_doc(doc)?;
         let vpn_config = Arc::new(vpn_config);
 
-        // 2. Инициализируем слушатель горячих клавиш
-        let mut listener = HotkeyListener::new()?;
-        for state in &vpn_config.states {
-            listener.register_state(state)?;
-        }
-
-        // 3. Создаем каналы событий (Event-Driven)
+        // 2. Создаем каналы событий (Event-Driven)
         let (input_tx, input_rx) = mpsc::channel::<VpnInputEvent>(100);
         let (domain_tx, domain_rx) = mpsc::channel::<VpnDomainEvent>(100);
 
-        // 4. Запускаем службу уведомлений
+        // 3. Запускаем службу уведомлений
         tokio::spawn(VpnNotificationService::run(domain_rx));
 
-        // 5. Запускаем прослушивание хоткеев
-        listener.start(input_tx);
-
-        // 6. Запускаем основное асинхронное приложение фичи в фоне
+        // 4. Запускаем основное асинхронное приложение фичи в фоне
         let app = VpnApp::new(vpn_config, domain_tx);
         tokio::spawn(app.run(input_rx));
 
-        Ok(())
+        Ok(input_tx)
     }
 }
 
@@ -76,11 +67,6 @@ impl VpnApp {
     async fn run(mut self, mut rx: mpsc::Receiver<VpnInputEvent>) {
         let current_state = self.vpn_mgr.detect_state(&self.config.states).await;
         println!("Фича VPN инициализирована. Текущий статус: {}", current_state.display_name);
-
-        println!("VPN горячие клавиши:");
-        for state in &self.config.states {
-            println!("  {:18} -> {}", state.hotkey_str, state.display_name);
-        }
 
         while let Some(event) = rx.recv().await {
             self.handle_event(event).await;

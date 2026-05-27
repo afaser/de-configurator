@@ -41,8 +41,6 @@ impl VpnManager {
         // Резервный вариант, если в конфиге вообще нет состояния без интерфейса
         VpnStateConfig {
             id: "off".to_string(),
-            hotkey_str: "".to_string(),
-            hotkey: global_hotkey::hotkey::HotKey::new(None, global_hotkey::hotkey::Code::F9),
             display_name: "VPN выключен".to_string(),
             interface: None,
             up_cmd: vec![],
