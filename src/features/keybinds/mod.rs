@@ -7,6 +7,7 @@ use kdl::KdlDocument;
 use global_hotkey::GlobalHotKeyManager;
 use crate::core::hotkey_dispatcher::HotkeyDispatcher;
 use crate::features::vpn::event::VpnInputEvent;
+use crate::features::daemons::event::DaemonInputEvent;
 
 use config::{KeybindsConfig, KeybindAction};
 
@@ -19,6 +20,7 @@ impl KeybindsFeature {
         manager: Arc<GlobalHotKeyManager>,
         dispatcher: &mut HotkeyDispatcher,
         vpn_tx: Option<mpsc::Sender<VpnInputEvent>>,
+        daemons_tx: Option<mpsc::Sender<DaemonInputEvent>>,
     ) -> Result<(), String> {
         // 1. Парсим конфигурацию keybinds
         let config = KeybindsConfig::parse_from_root_doc(doc)?;
@@ -48,6 +50,7 @@ impl KeybindsFeature {
                 match &bind.action {
                     KeybindAction::Run(cmd) => println!("  {:18} -> run {:?}", bind.hotkey_str, cmd),
                     KeybindAction::Vpn(state) => println!("  {:18} -> vpn '{}'", bind.hotkey_str, state),
+                    KeybindAction::Daemon(daemon_id, action) => println!("  {:18} -> daemon '{}' {:?}", bind.hotkey_str, daemon_id, action),
                 }
             }
 
@@ -86,6 +89,21 @@ impl KeybindsFeature {
                                 let _ = notify_rust::Notification::new()
                                     .summary("Ошибка VPN")
                                     .body(&format!("Не удалось переключить на '{}': VPN фича отключена в конфигурации", state_id))
+                                    .show();
+                            }
+                        }
+                        KeybindAction::Daemon(daemon_id, action) => {
+                            if let Some(ref tx) = daemons_tx {
+                                let _ = tx.send(DaemonInputEvent::Control {
+                                    daemon_id: daemon_id.clone(),
+                                    action: *action,
+                                    silent: false,
+                                }).await;
+                            } else {
+                                eprintln!("Ошибка: Запрошено управление демоном '{}', но фича Daemons отключена в конфигурации", daemon_id);
+                                let _ = notify_rust::Notification::new()
+                                    .summary("Ошибка демонов")
+                                    .body(&format!("Не удалось выполнить {:?} для '{}': фича Daemons отключена", action, daemon_id))
                                     .show();
                             }
                         }

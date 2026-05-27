@@ -20,6 +20,18 @@ feature "vpn" enabled=true {
     }
 }
 
+feature "daemons" enabled=true {
+    daemon "picom" autostart=true {
+        display-name "Picom Compositor"
+        start-cmd "picom" "-b"
+    }
+
+    daemon "dunst" autostart=true {
+        display-name "Dunst Notification Daemon"
+        start-cmd "dunst"
+    }
+}
+
 feature "keybinds" enabled=true {
     // Управление VPN (события передаются в VPN модуль)
     bind "ctrl+shift+f9" {
@@ -37,5 +49,14 @@ feature "keybinds" enabled=true {
     // Запуск внешних приложений
     bind "ctrl+shift+t" {
         run "alacritty"
+    }
+
+    // Управление демонами (on/off/toggle)
+    bind "ctrl+shift+p" {
+        daemon "picom" "toggle"
+    }
+
+    bind "ctrl+shift+d" {
+        daemon "dunst" "toggle"
     }
 }

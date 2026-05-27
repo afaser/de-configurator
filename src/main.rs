@@ -4,6 +4,7 @@ mod core {
 mod features {
     pub mod vpn;
     pub mod keybinds;
+    pub mod daemons;
 }
 
 use std::path::PathBuf;
@@ -53,10 +54,36 @@ async fn main() {
         println!("Фича 'vpn' отключена в конфигурации.");
     }
 
+    // 3.5. Проверяем и запускаем фичу Daemons (менеджер демонов)
+    let daemons_enabled = is_feature_enabled(&config_doc, "daemons");
+    let mut daemons_tx = None;
+    if daemons_enabled {
+        match features::daemons::DaemonsFeature::start(&config_doc).await {
+            Ok(tx) => {
+                daemons_tx = Some(tx);
+            }
+            Err(e) => {
+                eprintln!("Ошибка запуска Daemons: {}", e);
+                let _ = notify_rust::Notification::new()
+                    .summary("Ошибка запуска Daemons")
+                    .body(&e)
+                    .show();
+            }
+        }
+    } else {
+        println!("Фича 'daemons' отключена в конфигурации.");
+    }
+
     // 4. Проверяем и запускаем фичу Keybinds (она регистрирует все хоткеи)
     let keybinds_enabled = is_feature_enabled(&config_doc, "keybinds");
     if keybinds_enabled {
-        if let Err(e) = features::keybinds::KeybindsFeature::start(&config_doc, hotkey_manager.clone(), &mut dispatcher, vpn_tx).await {
+        if let Err(e) = features::keybinds::KeybindsFeature::start(
+            &config_doc,
+            hotkey_manager.clone(),
+            &mut dispatcher,
+            vpn_tx,
+            daemons_tx,
+        ).await {
             eprintln!("Ошибка запуска Keybinds: {}", e);
             let _ = notify_rust::Notification::new()
                 .summary("Ошибка запуска Keybinds")
