@@ -1,20 +1,24 @@
-state "off" {
-    hotkey "ctrl+shift+f9"
-    display-name "VPN выключен"
-}
+// Конфигурационный файл для de-configurator
 
-state "warp" {
-    hotkey "ctrl+shift+f10"
-    display-name "Warp"
-    interface "w"
-    up-cmd "doas" "wg-quick" "up" "w"
-    down-cmd "doas" "wg-quick" "down" "w"
-}
+feature "vpn" enabled=true {
+    state "off" {
+        hotkey "ctrl+shift+f9"
+        display-name "VPN выключен"
+    }
 
-state "finland" {
-    hotkey "ctrl+shift+f11"
-    display-name "Финляндия"
-    interface "fl"
-    up-cmd "doas" "wg-quick" "up" "fl"
-    down-cmd "doas" "wg-quick" "down" "fl"
+    state "warp" {
+        hotkey "ctrl+shift+f10"
+        display-name "Warp"
+        interface "w"
+        up-cmd "doas" "wg-quick" "up" "w"
+        down-cmd "doas" "wg-quick" "down" "w"
+    }
+
+    state "finland" {
+        hotkey "ctrl+shift+f11"
+        display-name "Финляндия"
+        interface "fl"
+        up-cmd "doas" "wg-quick" "up" "fl"
+        down-cmd "doas" "wg-quick" "down" "fl"
+    }
 }

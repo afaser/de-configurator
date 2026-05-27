@@ -1,6 +1,6 @@
 use notify_rust::Notification;
 use tokio::sync::mpsc;
-use crate::event::DomainEvent;
+use super::event::VpnDomainEvent;
 
 const NOTIFICATION_ID: u32 = 4224;
 
@@ -41,14 +41,14 @@ fn notify_error(title: &str, body: &str) {
     }
 }
 
-pub struct NotificationService;
+pub struct VpnNotificationService;
 
-impl NotificationService {
+impl VpnNotificationService {
     /// Запуск обработчика доменных событий для вывода уведомлений
-    pub async fn run(mut rx: mpsc::Receiver<DomainEvent>) {
+    pub async fn run(mut rx: mpsc::Receiver<VpnDomainEvent>) {
         while let Some(event) = rx.recv().await {
             match event {
-                DomainEvent::TransitionStarted { display_name, has_interface, .. } => {
+                VpnDomainEvent::TransitionStarted { display_name, has_interface, .. } => {
                     let title = format!("Переключение: {}", display_name);
                     let body = if has_interface {
                         format!("Установка соединения с {}...", display_name)
@@ -57,7 +57,7 @@ impl NotificationService {
                     };
                     notify_info(&title, &body);
                 }
-                DomainEvent::TransitionCompleted { display_name, ip_info, .. } => {
+                VpnDomainEvent::TransitionCompleted { display_name, ip_info, .. } => {
                     let title = format!("Успешно: {}", display_name);
                     let body = match ip_info {
                         Some(info) => format!("Соединение установлено\nIP: {} ({}, {})", info.query, info.city, info.country),
@@ -65,7 +65,7 @@ impl NotificationService {
                     };
                     notify_success(&title, &body);
                 }
-                DomainEvent::TransitionFailed { display_name, error, .. } => {
+                VpnDomainEvent::TransitionFailed { display_name, error, .. } => {
                     let title = format!("Ошибка: {}", display_name);
                     notify_error(&title, &error);
                 }

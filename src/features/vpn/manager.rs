@@ -1,5 +1,5 @@
 use tokio::fs;
-use crate::config::VpnStateConfig;
+use super::config::VpnStateConfig;
 
 #[derive(serde::Deserialize, Clone, Debug)]
 pub struct IpInfo {

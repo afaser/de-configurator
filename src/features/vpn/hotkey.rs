@@ -2,8 +2,8 @@ use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager,
 };
 use tokio::sync::mpsc;
-use crate::config::VpnStateConfig;
-use crate::event::InputEvent;
+use super::config::VpnStateConfig;
+use super::event::VpnInputEvent;
 
 pub struct HotkeyListener {
     manager: GlobalHotKeyManager,
@@ -31,7 +31,7 @@ impl HotkeyListener {
     }
 
     /// Запускает прослушивание событий клавиш в фоновом потоке
-    pub fn start(self, tx: mpsc::Sender<InputEvent>) {
+    pub fn start(self, tx: mpsc::Sender<VpnInputEvent>) {
         let receiver = GlobalHotKeyEvent::receiver();
         let hotkeys = self.hotkeys;
         let manager = self.manager; // Забираем владение менеджером
@@ -44,7 +44,7 @@ impl HotkeyListener {
                 if let Ok(event) = receiver.recv() {
                     // Ищем соответствие ID хоткея с ID нашего состояния в конфиге
                     if let Some((_, state_id)) = hotkeys.iter().find(|(id, _)| *id == event.id) {
-                        let input_event = InputEvent::RequestStateSwitch(state_id.clone());
+                        let input_event = VpnInputEvent::RequestStateSwitch(state_id.clone());
                         if tx.blocking_send(input_event).is_err() {
                             break; // Канал закрыт, завершаем работу потока
                         }

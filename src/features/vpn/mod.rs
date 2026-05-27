@@ -1,28 +1,71 @@
+pub mod config;
+pub mod event;
+pub mod hotkey;
+pub mod manager;
+pub mod notifier;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
-use crate::config::Config;
-use crate::vpn::VpnManager;
-use crate::event::{InputEvent, DomainEvent};
+use kdl::KdlDocument;
 
-pub struct App {
-    config: Arc<Config>,
-    vpn_mgr: VpnManager,
-    is_transitioning: Arc<AtomicBool>,
-    last_triggers: HashMap<String, tokio::time::Instant>, // Мапа (state_id -> время) для троттлинга
-    event_tx: mpsc::Sender<DomainEvent>,                 // Передатчик доменных событий
+use config::VpnConfig;
+use event::{VpnInputEvent, VpnDomainEvent};
+use hotkey::HotkeyListener;
+use manager::VpnManager;
+use notifier::VpnNotificationService;
+
+pub struct VpnFeature;
+
+impl VpnFeature {
+    /// Запуск фичи VPN на основе переданного KDL-документа конфигурации
+    pub async fn start(doc: &KdlDocument) -> Result<(), String> {
+        // 1. Парсим настройки VPN
+        let vpn_config = VpnConfig::parse_from_root_doc(doc)?;
+        let vpn_config = Arc::new(vpn_config);
+
+        // 2. Инициализируем слушатель горячих клавиш
+        let mut listener = HotkeyListener::new()?;
+        for state in &vpn_config.states {
+            listener.register_state(state)?;
+        }
+
+        // 3. Создаем каналы событий (Event-Driven)
+        let (input_tx, input_rx) = mpsc::channel::<VpnInputEvent>(100);
+        let (domain_tx, domain_rx) = mpsc::channel::<VpnDomainEvent>(100);
+
+        // 4. Запускаем службу уведомлений
+        tokio::spawn(VpnNotificationService::run(domain_rx));
+
+        // 5. Запускаем прослушивание хоткеев
+        listener.start(input_tx);
+
+        // 6. Запускаем основное асинхронное приложение фичи в фоне
+        let app = VpnApp::new(vpn_config, domain_tx);
+        tokio::spawn(app.run(input_rx));
+
+        Ok(())
+    }
 }
 
-impl App {
-    pub fn new(config: Config, event_tx: mpsc::Sender<DomainEvent>) -> Self {
+struct VpnApp {
+    config: Arc<VpnConfig>,
+    vpn_mgr: VpnManager,
+    is_transitioning: Arc<AtomicBool>,
+    last_triggers: HashMap<String, tokio::time::Instant>,
+    event_tx: mpsc::Sender<VpnDomainEvent>,
+}
+
+impl VpnApp {
+    fn new(config: Arc<VpnConfig>, event_tx: mpsc::Sender<VpnDomainEvent>) -> Self {
         let mut last_triggers = HashMap::new();
         for state in &config.states {
             last_triggers.insert(state.id.clone(), tokio::time::Instant::now() - std::time::Duration::from_secs(5));
         }
 
-        App {
-            config: Arc::new(config),
+        VpnApp {
+            config,
             vpn_mgr: VpnManager::new(),
             is_transitioning: Arc::new(AtomicBool::new(false)),
             last_triggers,
@@ -30,12 +73,11 @@ impl App {
         }
     }
 
-    /// Запуск основного цикла обработки входящих событий
-    pub async fn run(mut self, mut rx: mpsc::Receiver<InputEvent>) {
+    async fn run(mut self, mut rx: mpsc::Receiver<VpnInputEvent>) {
         let current_state = self.vpn_mgr.detect_state(&self.config.states).await;
-        println!("Текущий статус VPN: {}", current_state.display_name);
+        println!("Фича VPN инициализирована. Текущий статус: {}", current_state.display_name);
 
-        println!("Зарегистрированные горячие клавиши:");
+        println!("VPN горячие клавиши:");
         for state in &self.config.states {
             println!("  {:18} -> {}", state.hotkey_str, state.display_name);
         }
@@ -45,19 +87,18 @@ impl App {
         }
     }
 
-    /// Обработка поступившего входящего события
-    async fn handle_event(&mut self, event: InputEvent) {
+    async fn handle_event(&mut self, event: VpnInputEvent) {
         match event {
-            InputEvent::RequestStateSwitch(state_id) => {
+            VpnInputEvent::RequestStateSwitch(state_id) => {
                 let target_state = self.config.states.iter().find(|s| s.id == state_id);
 
                 if let Some(state) = target_state {
                     let now = tokio::time::Instant::now();
                     
-                    // Подавление дребезга кнопок (throttle) на основе state_id
+                    // Подавление дребезга (throttle) по ID состояния
                     if let Some(last_trigger) = self.last_triggers.get_mut(&state_id) {
                         if now.duration_since(*last_trigger) < std::time::Duration::from_secs(1) {
-                            return; // Игнорируем частые нажатия
+                            return;
                         }
                         *last_trigger = now;
                     }
@@ -77,26 +118,25 @@ impl App {
                     tokio::spawn(async move {
                         let vpn_mgr = VpnManager::new();
 
-                        // 1. Эмитим событие о начале перехода
-                        let _ = event_tx_clone.send(DomainEvent::TransitionStarted {
+                        // Эмитим начало перехода
+                        let _ = event_tx_clone.send(VpnDomainEvent::TransitionStarted {
                             state_id: state_clone.id.clone(),
                             display_name: state_clone.display_name.clone(),
                             has_interface: state_clone.interface.is_some(),
                         }).await;
 
-                        // 2. Выполняем переход
                         match vpn_mgr.switch_to(&state_clone, &config_clone.states).await {
                             Ok(maybe_ip_info) => {
-                                // 3. Эмитим событие об успешном завершении
-                                let _ = event_tx_clone.send(DomainEvent::TransitionCompleted {
+                                // Эмитим успех перехода
+                                let _ = event_tx_clone.send(VpnDomainEvent::TransitionCompleted {
                                     state_id: state_clone.id.clone(),
                                     display_name: state_clone.display_name.clone(),
                                     ip_info: maybe_ip_info,
                                 }).await;
                             }
                             Err(err_msg) => {
-                                // 4. Эмитим событие о сбое переключения
-                                let _ = event_tx_clone.send(DomainEvent::TransitionFailed {
+                                // Эмитим провал
+                                let _ = event_tx_clone.send(VpnDomainEvent::TransitionFailed {
                                     state_id: state_clone.id.clone(),
                                     display_name: state_clone.display_name.clone(),
                                     error: err_msg,
