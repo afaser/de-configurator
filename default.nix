@@ -5,9 +5,11 @@ pkgs.rustPlatform.buildRustPackage {
   version = "0.1.0";
   src = ./.;
 
-  cargoLock = {
+  cargoLock = if builtins.pathExists ./vendor then null else {
     lockFile = ./Cargo.lock;
   };
+
+  cargoVendorDir = if builtins.pathExists ./vendor then ./vendor else null;
 
   buildInputs = with pkgs; [
     xorg.libX11
