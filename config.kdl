@@ -36,7 +36,7 @@ feature "actions" enabled=true {
         daemon "picom" "on"
     }
 
-    action "game-mode" export=false {
+    action "game-mode" export=true {
         vpn "warp"
         daemon "picom" "off"
     }

@@ -1,8 +1,8 @@
 use notify_rust::Notification;
-use tokio::sync::mpsc;
-use super::event::DaemonDomainEvent;
+use tokio::sync::broadcast;
+use crate::core::event_bus::{SystemEvent, DaemonAction};
 
-const NOTIFICATION_ID: u32 = 4225; // Отдельный ID, чтобы не перебивать уведомления VPN
+const NOTIFICATION_ID: u32 = 4225;
 
 fn notify_info(title: &str, body: &str) {
     if let Err(e) = Notification::new()
@@ -32,24 +32,33 @@ fn notify_error(title: &str, body: &str) {
 pub struct DaemonNotificationService;
 
 impl DaemonNotificationService {
-    /// Запуск обработчика доменных событий для вывода уведомлений демонов
-    pub async fn run(mut rx: mpsc::Receiver<DaemonDomainEvent>) {
-        while let Some(event) = rx.recv().await {
+    pub async fn run(mut rx: broadcast::Receiver<SystemEvent>) {
+        while let Ok(event) = rx.recv().await {
             match event {
-                DaemonDomainEvent::StateChanged { display_name, is_running, .. } => {
-                    let title = format!("Демон: {}", display_name);
-                    let body = if is_running {
-                        format!("Процесс {} запущен", display_name)
-                    } else {
-                        format!("Процесс {} остановлен", display_name)
-                    };
-                    notify_info(&title, &body);
+                SystemEvent::DaemonStateChanged { display_name, is_running, context, .. } => {
+                    if !context.silent {
+                        let title = format!("Демон: {}", display_name);
+                        let body = if is_running {
+                            format!("Процесс {} запущен", display_name)
+                        } else {
+                            format!("Процесс {} остановлен", display_name)
+                        };
+                        notify_info(&title, &body);
+                    }
                 }
-                DaemonDomainEvent::TransitionFailed { display_name, action, error, .. } => {
-                    let title = format!("Ошибка демона: {}", display_name);
-                    let body = format!("Не удалось выполнить '{}' для {}: {}", action, display_name, error);
-                    notify_error(&title, &body);
+                SystemEvent::DaemonStateTransitionFailed { display_name, action, error, context, .. } => {
+                    if !context.silent {
+                        let title = format!("Ошибка демона: {}", display_name);
+                        let action_str = match action {
+                            DaemonAction::On => "включение",
+                            DaemonAction::Off => "выключение",
+                            DaemonAction::Toggle => "переключение",
+                        };
+                        let body = format!("Не удалось выполнить '{}' для {}: {}", action_str, display_name, error);
+                        notify_error(&title, &body);
+                    }
                 }
+                _ => {}
             }
         }
     }

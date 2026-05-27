@@ -7,7 +7,6 @@ impl DaemonManager {
         Self
     }
 
-    /// Проверяет, запущен ли процесс с указанным именем (с помощью pgrep -x)
     pub async fn is_running(&self, name: &str) -> bool {
         let status = tokio::process::Command::new("pgrep")
             .arg("-x")
@@ -21,7 +20,6 @@ impl DaemonManager {
         status.map(|s| s.success()).unwrap_or(false)
     }
 
-    /// Получает список PID-ов процессов по их точному имени
     pub async fn get_pids(&self, name: &str) -> Vec<u32> {
         let output = tokio::process::Command::new("pgrep")
             .arg("-x")
@@ -44,7 +42,6 @@ impl DaemonManager {
         vec![]
     }
 
-    /// Завершает процессы по PID
     pub async fn kill_pids(&self, pids: &[u32]) -> Result<(), String> {
         for &pid in pids {
             let status = tokio::process::Command::new("kill")
@@ -54,7 +51,6 @@ impl DaemonManager {
                 .map_err(|e| format!("Не удалось выполнить kill для PID {}: {}", pid, e))?;
             
             if !status.success() {
-                // Если обычный SIGTERM не помог, завершаем жестко через SIGKILL (-9)
                 let _ = tokio::process::Command::new("kill")
                     .arg("-9")
                     .arg(pid.to_string())
@@ -65,7 +61,6 @@ impl DaemonManager {
         Ok(())
     }
 
-    /// Запускает демон в фоновом режиме и возвращает его Child handle
     pub fn start_daemon(&self, cmd_parts: &[String]) -> Result<tokio::process::Child, String> {
         if cmd_parts.is_empty() {
             return Err("Пустая команда запуска".to_string());

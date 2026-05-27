@@ -15,7 +15,6 @@ pub struct VpnConfig {
 }
 
 impl VpnConfig {
-    /// Парсит секцию `feature "vpn"` из общего KDL-документа
     pub fn parse_from_root_doc(doc: &KdlDocument) -> Result<Self, String> {
         let vpn_node = doc.nodes().iter().find(|n| {
             n.name().value() == "feature"

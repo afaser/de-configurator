@@ -1,6 +1,5 @@
 use kdl::KdlDocument;
-use crate::features::actions::event::CommandAction;
-use crate::features::daemons::event::DaemonAction;
+use crate::core::event_bus::{CommandAction, DaemonAction};
 
 #[derive(Debug, Clone)]
 pub enum TriggerType {
@@ -20,7 +19,6 @@ pub struct TriggersConfig {
 }
 
 impl TriggersConfig {
-    /// Парсит секцию `feature "triggers"` из KDL-конфигурации
     pub fn parse_from_root_doc(doc: &KdlDocument) -> Result<Self, String> {
         let triggers_node = doc.nodes().iter().find(|n| {
             n.name().value() == "feature"

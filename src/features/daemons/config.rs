@@ -15,7 +15,6 @@ pub struct DaemonsConfig {
 }
 
 impl DaemonsConfig {
-    /// Парсит секцию `feature "daemons"` из общего KDL-документа
     pub fn parse_from_root_doc(doc: &KdlDocument) -> Result<Self, String> {
         let daemons_node = doc.nodes().iter().find(|n| {
             n.name().value() == "feature"
@@ -33,7 +32,6 @@ impl DaemonsConfig {
                         .ok_or_else(|| "У узла daemon должен быть строковый идентификатор".to_string())?
                         .to_string();
 
-                    // Парсим свойство autostart=true/false (по умолчанию false)
                     let autostart = node.entries().iter()
                         .find(|e| e.name().map(|i| i.value()) == Some("autostart"))
                         .and_then(|e| e.value().as_bool())

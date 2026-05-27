@@ -6,32 +6,23 @@ use tokio::sync::mpsc;
 use kdl::KdlDocument;
 use global_hotkey::GlobalHotKeyManager;
 use crate::core::hotkey_dispatcher::HotkeyDispatcher;
-use crate::features::vpn::event::VpnInputEvent;
-use crate::features::daemons::event::DaemonInputEvent;
-use crate::features::actions::event::{ActionInputEvent, CommandAction};
-
+use crate::core::event_bus::{EventBus, SystemEvent, CommandAction, EventContext, Initiator};
 use config::KeybindsConfig;
 
 pub struct KeybindsFeature;
 
 impl KeybindsFeature {
-    /// Запуск фичи Keybinds на основе KDL-документа конфигурации
     pub async fn start(
         doc: &KdlDocument,
         manager: Arc<GlobalHotKeyManager>,
         dispatcher: &mut HotkeyDispatcher,
-        vpn_tx: Option<mpsc::Sender<VpnInputEvent>>,
-        daemons_tx: Option<mpsc::Sender<DaemonInputEvent>>,
-        actions_tx: Option<mpsc::Sender<ActionInputEvent>>,
+        event_bus: EventBus,
     ) -> Result<(), String> {
-        // 1. Парсим конфигурацию keybinds
         let config = KeybindsConfig::parse_from_root_doc(doc)?;
         let config = Arc::new(config);
 
-        // 2. Создаем асинхронный канал для получения событий от диспетчера
         let (local_tx, mut local_rx) = mpsc::channel::<u32>(100);
 
-        // 3. Регистрируем клавиши в глобальном менеджере и диспетчере
         for bind in &config.binds {
             manager
                 .register(bind.hotkey)
@@ -40,7 +31,6 @@ impl KeybindsFeature {
             dispatcher.register(bind.hotkey.id(), local_tx.clone());
         }
 
-        // 4. Запускаем фоновый цикл обработки нажатий
         tokio::spawn(async move {
             let mut last_triggers = HashMap::new();
             for bind in &config.binds {
@@ -62,7 +52,6 @@ impl KeybindsFeature {
                 if let Some(b) = bind {
                     let now = tokio::time::Instant::now();
                     
-                    // Подавление дребезга кнопок (throttle) на основе ID хоткея
                     if let Some(last_trigger) = last_triggers.get_mut(&event_id) {
                         if now.duration_since(*last_trigger) < std::time::Duration::from_secs(1) {
                             continue;
@@ -70,56 +59,36 @@ impl KeybindsFeature {
                         *last_trigger = now;
                     }
 
+                    let context = EventContext {
+                        initiator: Initiator::Keybind,
+                        silent: false,
+                    };
+
                     match &b.action {
                         CommandAction::Run(cmd_parts) => {
-                            if !cmd_parts.is_empty() {
-                                let mut cmd = tokio::process::Command::new(&cmd_parts[0]);
-                                cmd.args(&cmd_parts[1..]);
-                                if let Err(e) = cmd.spawn() {
-                                    eprintln!("Ошибка запуска команды: {}", e);
-                                    let _ = notify_rust::Notification::new()
-                                        .summary("Ошибка запуска")
-                                        .body(&format!("Команда {:?} завершилась с ошибкой: {}", cmd_parts, e))
-                                        .show();
-                                }
-                            }
+                            event_bus.publish(SystemEvent::RequestCommandExecute {
+                                command: CommandAction::Run(cmd_parts.clone()),
+                                context,
+                            });
                         }
                         CommandAction::Vpn(state_id) => {
-                            if let Some(ref tx) = vpn_tx {
-                                let _ = tx.send(VpnInputEvent::RequestStateSwitch(state_id.clone())).await;
-                            } else {
-                                eprintln!("Ошибка: Запрошено действие vpn '{}', но фича VPN отключена в конфигурации", state_id);
-                                let _ = notify_rust::Notification::new()
-                                    .summary("Ошибка VPN")
-                                    .body(&format!("Не удалось переключить на '{}': VPN фича отключена в конфигурации", state_id))
-                                    .show();
-                            }
+                            event_bus.publish(SystemEvent::RequestVpnSwitch {
+                                state_id: state_id.clone(),
+                                context,
+                            });
                         }
                         CommandAction::Daemon(daemon_id, action) => {
-                            if let Some(ref tx) = daemons_tx {
-                                let _ = tx.send(DaemonInputEvent::Control {
-                                    daemon_id: daemon_id.clone(),
-                                    action: *action,
-                                    silent: false,
-                                }).await;
-                            } else {
-                                eprintln!("Ошибка: Запрошено управление демоном '{}', но фича Daemons отключена в конфигурации", daemon_id);
-                                let _ = notify_rust::Notification::new()
-                                    .summary("Ошибка демонов")
-                                    .body(&format!("Не удалось выполнить {:?} для '{}': фича Daemons отключена", action, daemon_id))
-                                    .show();
-                            }
+                            event_bus.publish(SystemEvent::RequestDaemonControl {
+                                daemon_id: daemon_id.clone(),
+                                action: *action,
+                                context,
+                            });
                         }
                         CommandAction::Action(action_id) => {
-                            if let Some(ref tx) = actions_tx {
-                                let _ = tx.send(ActionInputEvent::ExecuteAction(action_id.clone())).await;
-                            } else {
-                                eprintln!("Ошибка: Запрошено действие '{}', но фича Actions отключена в конфигурации", action_id);
-                                let _ = notify_rust::Notification::new()
-                                    .summary("Ошибка вызова действия")
-                                    .body(&format!("Не удалось выполнить экшен '{}': фича Actions отключена", action_id))
-                                    .show();
-                            }
+                            event_bus.publish(SystemEvent::RequestActionExecute {
+                                action_id: action_id.clone(),
+                                context,
+                            });
                         }
                     }
                 }

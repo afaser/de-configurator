@@ -1,55 +1,102 @@
 pub mod config;
-pub mod event;
 pub mod manager;
 pub mod notifier;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
-use tokio::sync::mpsc;
 use kdl::KdlDocument;
-
+use crate::core::event_bus::{EventBus, SystemEvent, EventContext, Initiator};
 use config::VpnConfig;
-use event::{VpnInputEvent, VpnDomainEvent};
 use manager::VpnManager;
 use notifier::VpnNotificationService;
+
+pub trait VpnState: Send + Sync {
+    #[allow(dead_code)]
+    fn state_id(&self) -> &str;
+
+    #[allow(dead_code)]
+    fn display_name(&self) -> &str;
+
+    fn is_transitioning(&self) -> bool {
+        false
+    }
+}
+
+pub struct Disconnected;
+
+impl VpnState for Disconnected {
+    fn state_id(&self) -> &str {
+        "off"
+    }
+
+    fn display_name(&self) -> &str {
+        "VPN выключен"
+    }
+}
+
+pub struct Connected {
+    pub id: String,
+    pub display_name: String,
+}
+
+impl VpnState for Connected {
+    fn state_id(&self) -> &str {
+        &self.id
+    }
+
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+}
+
+pub struct Transitioning {
+    pub target_id: String,
+    pub display_name: String,
+}
+
+impl VpnState for Transitioning {
+    fn state_id(&self) -> &str {
+        &self.target_id
+    }
+
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    fn is_transitioning(&self) -> bool {
+        true
+    }
+}
 
 pub struct VpnFeature;
 
 impl VpnFeature {
-    /// Запуск фичи VPN на основе переданного KDL-документа конфигурации
     pub async fn start(
         doc: &KdlDocument,
-    ) -> Result<mpsc::Sender<VpnInputEvent>, String> {
-        // 1. Парсим настройки VPN
+        event_bus: EventBus,
+    ) -> Result<(), String> {
         let vpn_config = VpnConfig::parse_from_root_doc(doc)?;
         let vpn_config = Arc::new(vpn_config);
 
-        // 2. Создаем каналы событий (Event-Driven)
-        let (input_tx, input_rx) = mpsc::channel::<VpnInputEvent>(100);
-        let (domain_tx, domain_rx) = mpsc::channel::<VpnDomainEvent>(100);
+        tokio::spawn(VpnNotificationService::run(event_bus.subscribe()));
 
-        // 3. Запускаем службу уведомлений
-        tokio::spawn(VpnNotificationService::run(domain_rx));
+        let app = VpnApp::new(vpn_config, event_bus.clone());
+        tokio::spawn(app.run());
 
-        // 4. Запускаем основное асинхронное приложение фичи в фоне
-        let app = VpnApp::new(vpn_config, domain_tx);
-        tokio::spawn(app.run(input_rx));
-
-        Ok(input_tx)
+        Ok(())
     }
 }
 
 struct VpnApp {
     config: Arc<VpnConfig>,
     vpn_mgr: VpnManager,
-    is_transitioning: Arc<AtomicBool>,
+    state: Box<dyn VpnState>,
     last_triggers: HashMap<String, tokio::time::Instant>,
-    event_tx: mpsc::Sender<VpnDomainEvent>,
+    event_bus: EventBus,
 }
 
 impl VpnApp {
-    fn new(config: Arc<VpnConfig>, event_tx: mpsc::Sender<VpnDomainEvent>) -> Self {
+    fn new(config: Arc<VpnConfig>, event_bus: EventBus) -> Self {
         let mut last_triggers = HashMap::new();
         for state in &config.states {
             last_triggers.insert(state.id.clone(), tokio::time::Instant::now() - std::time::Duration::from_secs(5));
@@ -58,30 +105,51 @@ impl VpnApp {
         VpnApp {
             config,
             vpn_mgr: VpnManager::new(),
-            is_transitioning: Arc::new(AtomicBool::new(false)),
+            state: Box::new(Disconnected),
             last_triggers,
-            event_tx,
+            event_bus,
         }
     }
 
-    async fn run(mut self, mut rx: mpsc::Receiver<VpnInputEvent>) {
+    async fn run(mut self) {
         let current_state = self.vpn_mgr.detect_state(&self.config.states).await;
         println!("Фича VPN инициализирована. Текущий статус: {}", current_state.display_name);
 
-        while let Some(event) = rx.recv().await {
+        let initial_context = EventContext {
+            initiator: Initiator::Direct,
+            silent: true,
+        };
+
+        self.event_bus.publish(SystemEvent::VpnStateChanged {
+            state_id: current_state.id.clone(),
+            display_name: current_state.display_name.clone(),
+            ip_info: None,
+            context: initial_context,
+        });
+
+        if current_state.interface.is_some() {
+            self.state = Box::new(Connected {
+                id: current_state.id.clone(),
+                display_name: current_state.display_name.clone(),
+            });
+        } else {
+            self.state = Box::new(Disconnected);
+        }
+
+        let mut rx = self.event_bus.subscribe();
+        while let Ok(event) = rx.recv().await {
             self.handle_event(event).await;
         }
     }
 
-    async fn handle_event(&mut self, event: VpnInputEvent) {
+    async fn handle_event(&mut self, event: SystemEvent) {
         match event {
-            VpnInputEvent::RequestStateSwitch(state_id) => {
+            SystemEvent::RequestVpnSwitch { state_id, context } => {
                 let target_state = self.config.states.iter().find(|s| s.id == state_id);
 
                 if let Some(state) = target_state {
                     let now = tokio::time::Instant::now();
                     
-                    // Подавление дребезга (throttle) по ID состояния
                     if let Some(last_trigger) = self.last_triggers.get_mut(&state_id) {
                         if now.duration_since(*last_trigger) < std::time::Duration::from_secs(1) {
                             return;
@@ -89,51 +157,77 @@ impl VpnApp {
                         *last_trigger = now;
                     }
 
-                    if self.is_transitioning.load(Ordering::SeqCst) {
+                    if self.state.is_transitioning() {
                         println!("Игнорируем запрос на {}, так как процесс переключения уже запущен", state_id);
                         return;
                     }
 
-                    let is_transitioning_clone = Arc::clone(&self.is_transitioning);
-                    is_transitioning_clone.store(true, Ordering::SeqCst);
+                    self.state = Box::new(Transitioning {
+                        target_id: state.id.clone(),
+                        display_name: state.display_name.clone(),
+                    });
 
                     let state_clone = state.clone();
                     let config_clone = Arc::clone(&self.config);
-                    let event_tx_clone = self.event_tx.clone();
+                    let event_bus_clone = self.event_bus.clone();
+                    let context_clone = context.clone();
 
                     tokio::spawn(async move {
                         let vpn_mgr = VpnManager::new();
 
-                        // Эмитим начало перехода
-                        let _ = event_tx_clone.send(VpnDomainEvent::TransitionStarted {
+                        event_bus_clone.publish(SystemEvent::VpnTransitionStarted {
                             state_id: state_clone.id.clone(),
                             display_name: state_clone.display_name.clone(),
                             has_interface: state_clone.interface.is_some(),
-                        }).await;
+                            context: context_clone.clone(),
+                        });
 
                         match vpn_mgr.switch_to(&state_clone, &config_clone.states).await {
                             Ok(maybe_ip_info) => {
-                                // Эмитим успех перехода
-                                let _ = event_tx_clone.send(VpnDomainEvent::TransitionCompleted {
+                                let ip_info_str = maybe_ip_info.map(|info| {
+                                    format!("IP: {} ({}, {})", info.query, info.city, info.country)
+                                });
+                                event_bus_clone.publish(SystemEvent::VpnStateChanged {
                                     state_id: state_clone.id.clone(),
                                     display_name: state_clone.display_name.clone(),
-                                    ip_info: maybe_ip_info,
-                                }).await;
+                                    ip_info: ip_info_str,
+                                    context: context_clone,
+                                });
                             }
                             Err(err_msg) => {
-                                // Эмитим провал
-                                let _ = event_tx_clone.send(VpnDomainEvent::TransitionFailed {
+                                event_bus_clone.publish(SystemEvent::VpnStateTransitionFailed {
                                     state_id: state_clone.id.clone(),
                                     display_name: state_clone.display_name.clone(),
                                     error: err_msg,
-                                }).await;
+                                    context: context_clone,
+                                });
                             }
                         }
-
-                        is_transitioning_clone.store(false, Ordering::SeqCst);
                     });
                 }
             }
+            SystemEvent::VpnStateChanged { state_id, display_name, .. } => {
+                if state_id == "off" {
+                    self.state = Box::new(Disconnected);
+                } else {
+                    self.state = Box::new(Connected {
+                        id: state_id,
+                        display_name,
+                    });
+                }
+            }
+            SystemEvent::VpnStateTransitionFailed { .. } => {
+                let current_state = self.vpn_mgr.detect_state(&self.config.states).await;
+                if current_state.interface.is_some() {
+                    self.state = Box::new(Connected {
+                        id: current_state.id,
+                        display_name: current_state.display_name,
+                    });
+                } else {
+                    self.state = Box::new(Disconnected);
+                }
+            }
+            _ => {}
         }
     }
 }

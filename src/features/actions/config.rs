@@ -1,5 +1,4 @@
-use super::event::CommandAction;
-use crate::features::daemons::event::DaemonAction;
+use crate::core::event_bus::{CommandAction, DaemonAction};
 use kdl::KdlDocument;
 
 #[derive(Debug, Clone)]
@@ -15,7 +14,6 @@ pub struct ActionsConfig {
 }
 
 impl ActionsConfig {
-    /// Парсит секцию `feature "actions"` из KDL-конфигурации
     pub fn parse_from_root_doc(doc: &KdlDocument) -> Result<Self, String> {
         let actions_node = doc.nodes().iter().find(|n| {
             n.name().value() == "feature"
@@ -52,37 +50,23 @@ impl ActionsConfig {
                         for cmd_node in cmd_children.nodes() {
                             let cmd = match cmd_node.name().value() {
                                 "run" => {
-                                    let parts: Vec<String> = cmd_node
-                                        .entries()
-                                        .iter()
+                                    let parts: Vec<String> = cmd_node.entries().iter()
                                         .filter_map(|e| e.value().as_string().map(String::from))
                                         .collect();
                                     if parts.is_empty() {
-                                        return Err(format!(
-                                            "У действия run в экшене '{}' не указана команда",
-                                            id
-                                        ));
+                                        return Err(format!("У действия run в экшене '{}' не указана команда", id));
                                     }
                                     CommandAction::Run(parts)
                                 }
                                 "vpn" => {
-                                    let state = cmd_node
-                                        .entries()
-                                        .get(0)
+                                    let state = cmd_node.entries().get(0)
                                         .and_then(|e| e.value().as_string())
-                                        .ok_or_else(|| {
-                                            format!(
-                                                "У действия vpn в экшене '{}' не указано состояние",
-                                                id
-                                            )
-                                        })?
+                                        .ok_or_else(|| format!("У действия vpn в экшене '{}' не указано состояние", id))?
                                         .to_string();
                                     CommandAction::Vpn(state)
                                 }
                                 "daemon" => {
-                                    let daemon_id = cmd_node
-                                        .entries()
-                                        .get(0)
+                                    let daemon_id = cmd_node.entries().get(0)
                                         .and_then(|e| e.value().as_string())
                                         .ok_or_else(|| {
                                             format!(

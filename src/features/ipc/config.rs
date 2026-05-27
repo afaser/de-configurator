@@ -6,7 +6,6 @@ pub struct IpcConfig {
 }
 
 impl IpcConfig {
-    /// Парсит секцию `feature "ipc"` из общего KDL-документа
     pub fn parse_from_root_doc(doc: &KdlDocument) -> Result<Self, String> {
         let ipc_node = doc.nodes().iter().find(|n| {
             n.name().value() == "feature"
@@ -34,5 +33,5 @@ impl IpcConfig {
         }
 
         Ok(IpcConfig { path })
-       }
+    }
 }

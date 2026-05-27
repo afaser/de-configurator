@@ -1,8 +1,7 @@
 use kdl::KdlDocument;
 use std::str::FromStr;
 use global_hotkey::hotkey::HotKey;
-use crate::features::daemons::event::DaemonAction;
-use crate::features::actions::event::CommandAction;
+use crate::core::event_bus::{CommandAction, DaemonAction};
 
 #[derive(Debug, Clone)]
 pub struct KeybindConfig {
@@ -17,7 +16,6 @@ pub struct KeybindsConfig {
 }
 
 impl KeybindsConfig {
-    /// Парсит секцию `feature "keybinds"` из общего KDL-документа
     pub fn parse_from_root_doc(doc: &KdlDocument) -> Result<Self, String> {
         let keybinds_node = doc.nodes().iter().find(|n| {
             n.name().value() == "feature"
@@ -35,7 +33,6 @@ impl KeybindsConfig {
                         .ok_or_else(|| "У узла bind должно быть указано сочетание клавиш (строка)".to_string())?
                         .to_string();
 
-                    // Ищем первый дочерний узел, который является действием
                     let child_node = node.children()
                         .and_then(|c| c.nodes().first())
                         .ok_or_else(|| format!("У бинда '{}' должно быть указано действие (run, vpn, daemon или action)", hotkey_str))?;

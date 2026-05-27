@@ -1,25 +1,23 @@
-mod core {
-    pub mod hotkey_dispatcher;
-}
-mod features {
-    pub mod vpn;
-    pub mod keybinds;
-    pub mod daemons;
-    pub mod actions;
-    pub mod triggers;
-    pub mod ipc;
-}
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use std::path::PathBuf;
+mod core {
+    pub mod config;
+    pub mod event_bus;
+    pub mod hotkey_dispatcher;
+    pub mod state_store;
+}
+mod features;
+
 use std::sync::Arc;
-use kdl::KdlDocument;
 use global_hotkey::GlobalHotKeyManager;
 use core::hotkey_dispatcher::HotkeyDispatcher;
+use core::event_bus::EventBus;
+use core::state_store::StateStore;
 
 #[tokio::main]
 async fn main() {
-    // 1. Загружаем общий KDL-конфиг
-    let (config_doc, config_path) = match get_config_doc() {
+    let (config_doc, config_path) = match core::config::get_config_doc() {
         Ok(res) => res,
         Err(e) => {
             eprintln!("Критическая ошибка конфигурации: {}", e);
@@ -33,214 +31,25 @@ async fn main() {
 
     println!("Конфигурация успешно загружена из: {}", config_path.display());
 
-    // 2. Инициализируем глобальный HotKeyManager и HotkeyDispatcher
     let hotkey_manager = Arc::new(GlobalHotKeyManager::new().unwrap());
     let mut dispatcher = HotkeyDispatcher::new(hotkey_manager.clone());
 
-    // 3. Проверяем и запускаем фичу VPN (теперь она чисто реактивная, без хоткеев)
-    let vpn_enabled = is_feature_enabled(&config_doc, "vpn");
-    let mut vpn_tx = None;
-    if vpn_enabled {
-        match features::vpn::VpnFeature::start(&config_doc).await {
-            Ok(tx) => {
-                vpn_tx = Some(tx);
-            }
-            Err(e) => {
-                eprintln!("Ошибка запуска VPN: {}", e);
-                let _ = notify_rust::Notification::new()
-                    .summary("Ошибка запуска VPN")
-                    .body(&e)
-                    .show();
-            }
-        }
-    } else {
-        println!("Фича 'vpn' отключена в конфигурации.");
+    let event_bus = EventBus::new();
+    let state_store = StateStore::new();
+    state_store.start_sync(event_bus.subscribe());
+
+    if let Err(e) = features::start_all(&config_doc, event_bus, hotkey_manager, &mut dispatcher).await {
+        eprintln!("Ошибка инициализации компонентов: {}", e);
+        let _ = notify_rust::Notification::new()
+            .summary("Ошибка инициализации")
+            .body(&e)
+            .show();
+        return;
     }
 
-    // 3.5. Проверяем и запускаем фичу Daemons (менеджер демонов)
-    let daemons_enabled = is_feature_enabled(&config_doc, "daemons");
-    let mut daemons_tx = None;
-    if daemons_enabled {
-        match features::daemons::DaemonsFeature::start(&config_doc).await {
-            Ok(tx) => {
-                daemons_tx = Some(tx);
-            }
-            Err(e) => {
-                eprintln!("Ошибка запуска Daemons: {}", e);
-                let _ = notify_rust::Notification::new()
-                    .summary("Ошибка запуска Daemons")
-                    .body(&e)
-                    .show();
-            }
-        }
-    } else {
-        println!("Фича 'daemons' отключена в конфигурации.");
-    }
-
-    // 3.7. Проверяем и запускаем фичу Actions (действия)
-    let actions_enabled = is_feature_enabled(&config_doc, "actions");
-    let mut actions_tx = None;
-    if actions_enabled {
-        match features::actions::ActionsFeature::start(&config_doc, vpn_tx.clone(), daemons_tx.clone()).await {
-            Ok(tx) => {
-                actions_tx = Some(tx);
-            }
-            Err(e) => {
-                eprintln!("Ошибка запуска Actions: {}", e);
-                let _ = notify_rust::Notification::new()
-                    .summary("Ошибка запуска Actions")
-                    .body(&e)
-                    .show();
-            }
-        }
-    } else {
-        println!("Фича 'actions' отключена в конфигурации.");
-    }
-
-    // 3.8. Проверяем и запускаем фичу Triggers (триггеры)
-    let triggers_enabled = is_feature_enabled(&config_doc, "triggers");
-    if triggers_enabled {
-        if let Some(ref tx) = actions_tx {
-            if let Err(e) = features::triggers::TriggersFeature::start(&config_doc, tx.clone()).await {
-                eprintln!("Ошибка запуска Triggers: {}", e);
-                let _ = notify_rust::Notification::new()
-                    .summary("Ошибка запуска Triggers")
-                    .body(&e)
-                    .show();
-            }
-        } else {
-            println!("Фича 'triggers' включена, но фича 'actions' отключена. Запуск триггеров невозможен.");
-        }
-    } else {
-        println!("Фича 'triggers' отключена в конфигурации.");
-    }
-
-    // 3.9. Проверяем и запускаем фичу IPC (сокет-сервер)
-    let ipc_enabled = is_feature_enabled(&config_doc, "ipc");
-    if ipc_enabled {
-        if let Some(ref tx) = actions_tx {
-            if let Err(e) = features::ipc::IpcFeature::start(&config_doc, tx.clone()).await {
-                eprintln!("Ошибка запуска IPC: {}", e);
-                let _ = notify_rust::Notification::new()
-                    .summary("Ошибка запуска IPC")
-                    .body(&e)
-                    .show();
-            }
-        } else {
-            println!("Фича 'ipc' включена, но фича 'actions' отключена. Запуск IPC невозможен.");
-        }
-    } else {
-        println!("Фича 'ipc' отключена в конфигурации.");
-    }
-
-    // 4. Проверяем и запускаем фичу Keybinds (она регистрирует все хоткеи)
-    let keybinds_enabled = is_feature_enabled(&config_doc, "keybinds");
-    if keybinds_enabled {
-        if let Err(e) = features::keybinds::KeybindsFeature::start(
-            &config_doc,
-            hotkey_manager.clone(),
-            &mut dispatcher,
-            vpn_tx,
-            daemons_tx,
-            actions_tx,
-        ).await {
-            eprintln!("Ошибка запуска Keybinds: {}", e);
-            let _ = notify_rust::Notification::new()
-                .summary("Ошибка запуска Keybinds")
-                .body(&e)
-                .show();
-        }
-    } else {
-        println!("Фича 'keybinds' отключена в конфигурации.");
-    }
-
-    // 5. Запускаем диспетчер событий клавиатуры
     dispatcher.start();
 
-    // 6. Удерживаем программу запущенной (ждем Ctrl+C)
     println!("Приложение запущено. Нажмите Ctrl+C для выхода.");
     let _ = tokio::signal::ctrl_c().await;
     println!("Завершение работы...");
-}
-
-/// Проверяет, включена ли фича с указанным именем в конфигурации
-fn is_feature_enabled(doc: &KdlDocument, feature_name: &str) -> bool {
-    doc.nodes().iter().find(|n| {
-        n.name().value() == "feature"
-        && n.entries().get(0).and_then(|e| e.value().as_string()) == Some(feature_name)
-    })
-    .and_then(|n| {
-        n.entries().iter().find(|e| e.name().map(|id| id.value()) == Some("enabled"))
-    })
-    .and_then(|e| e.value().as_bool())
-    .unwrap_or(false)
-}
-
-/// Находит и считывает файл конфигурации, при отсутствии создает дефолтный
-fn get_config_doc() -> Result<(KdlDocument, PathBuf), String> {
-    // 1. Попробуем прочитать локальный ./config.kdl
-    let local_path = PathBuf::from("config.kdl");
-    if local_path.exists() {
-        let content = std::fs::read_to_string(&local_path)
-            .map_err(|e| format!("Не удалось прочитать local config.kdl: {}", e))?;
-        let doc = content.parse().map_err(|e| format!("Ошибка парсинга KDL: {}", e))?;
-        return Ok((doc, local_path));
-    }
-
-    // 2. Попробуем прочитать ~/.config/de-configurator/config.kdl
-    let home = std::env::var("HOME").ok();
-    if let Some(h) = home {
-        let config_path = PathBuf::from(h).join(".config/de-configurator/config.kdl");
-        if config_path.exists() {
-            let content = std::fs::read_to_string(&config_path)
-                .map_err(|e| format!("Не удалось прочитать ~/.config/de-configurator/config.kdl: {}", e))?;
-            let doc = content.parse().map_err(|e| format!("Ошибка парсинга KDL: {}", e))?;
-            return Ok((doc, config_path));
-        }
-    }
-
-    // 3. Создаем дефолтный конфиг в текущей папке
-    let default_content = r#"// Конфигурационный файл для de-configurator
-
-feature "vpn" enabled=true {
-    state "off" {
-        display-name "VPN выключен"
-    }
-
-    state "warp" {
-        display-name "Warp"
-        interface "w"
-        up-cmd "doas" "wg-quick" "up" "w"
-        down-cmd "doas" "wg-quick" "down" "w"
-    }
-
-    state "finland" {
-        display-name "Финляндия"
-        interface "fl"
-        up-cmd "doas" "wg-quick" "up" "fl"
-        down-cmd "doas" "wg-quick" "down" "fl"
-    }
-}
-
-feature "keybinds" enabled=true {
-    // Открыть терминал
-    bind "ctrl+shift+t" {
-        run "alacritty"
-    }
-    
-    // Переключить VPN на Warp
-    bind "ctrl+shift+w" {
-        vpn "warp"
-    }
-
-    // Выключить VPN
-    bind "ctrl+shift+o" {
-        vpn "off"
-    }
-}
-"#;
-    std::fs::write(&local_path, default_content)
-        .map_err(|e| format!("Не удалось создать дефолтный config.kdl: {}", e))?;
-    let doc = default_content.parse().map_err(|e| format!("Ошибка парсинга KDL: {}", e))?;
-    Ok((doc, local_path))
 }
