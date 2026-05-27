@@ -2,3 +2,4 @@
 config.kdl
 /vendor
 /.cargo
+/result

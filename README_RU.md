@@ -217,3 +217,10 @@ feature "keybinds" enabled=true {
     }
 }
 ```
+
+---
+
+## 📄 Лицензия
+
+Этот проект распространяется под лицензией GPL-3.0-or-later — подробности в файле [LICENSE](LICENSE).
+

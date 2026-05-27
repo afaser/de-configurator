@@ -9,7 +9,7 @@ pkgs.rustPlatform.buildRustPackage {
     lockFile = ./Cargo.lock;
   };
 
-  cargoVendorDir = if builtins.pathExists ./vendor then ./vendor else null;
+  cargoVendorDir = if builtins.pathExists ./vendor then "vendor" else null;
 
   buildInputs = with pkgs; [
     xorg.libX11
@@ -29,4 +29,11 @@ pkgs.rustPlatform.buildRustPackage {
         xorg.libXi
       ])}"
   '';
+
+  meta = with pkgs.lib; {
+    description = "Lightweight background daemon for desktop environment configuration";
+    homepage = "https://github.com/afaser/de-configurator";
+    license = licenses.gpl3Plus;
+    platforms = platforms.linux;
+  };
 }
